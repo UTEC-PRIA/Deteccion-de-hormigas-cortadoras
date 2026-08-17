@@ -19,6 +19,9 @@ La GoPro ahora se conecta de manera **100% inalámbrica**, eliminando la necesid
 pip install -r requirements.txt
 ```
 
+> **[📝 Ver Guía Completa para Desarrolladores (DEVELOPER_GUIDE.md)](DEVELOPER_GUIDE.md)**
+> Para una explicación técnica profunda de la arquitectura, la máquina de estados, el manejo de MAVLink y recomendaciones de futuras mejoras para el equipo de PRIA, lee la guía para desarrolladores.
+
 ## 🛠️ Estructura del Proyecto
 * `main.py`: Servidor FastAPI con WebSockets para telemetría en vivo.
 * `mission_manager.py`: Máquina de estados que orquesta el ciclo de la misión (IDLE → PRE_FLIGHT → IN_FLIGHT → LANDING → SYNCING).
