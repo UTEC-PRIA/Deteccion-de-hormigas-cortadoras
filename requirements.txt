@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+open-gopro
+jinja2
+pymavlink
+Pillow
+python-multipart
+aiofiles
+websockets
