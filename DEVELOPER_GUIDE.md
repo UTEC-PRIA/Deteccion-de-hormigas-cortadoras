@@ -19,7 +19,10 @@ graph TD;
     MM --> GM[GoProManager];
     MM --> SE[SyncEngine];
     
-    TM <-->|MAVLink via SiK Radio| Drone[Pixhawk 2.4.8];
+    TM <-->|TCP:5761| MAVProxy[MAVProxy Router];
+    MP[Mission Planner] <-->|TCP:5760| MAVProxy;
+    MAVProxy <-->|USB /dev/ttyUSB0| Drone[Pixhawk 2.4.8];
+    
     GM <-->|BLE & WiFi| Camera[GoPro HERO9+];
 ```
 
@@ -33,11 +36,11 @@ Es el "cerebro" central del sistema. Implementa una máquina de estados finitos 
 * **Función:** Coordina que la GoPro empiece a capturar solo cuando la telemetría está lista, y dispara la descarga de imágenes automáticamente cuando la telemetría reporta un aterrizaje (`LANDED` o `RTL`).
 * **Mejoras Futuras:** Se podrían añadir nuevos estados (ej. `ERROR_RECOVERY`) o lógica de reintentos automáticos en caso de pérdida temporal de telemetría.
 
-### 2.2. `telemetry_manager.py` (Integración MAVLink)
-Se encarga de la comunicación con el autopiloto (Pixhawk) utilizando la librería `pymavlink`.
-* **Conexión:** Se enlaza a un puerto serial local (ej. `/dev/ttyUSB0`) que corresponde al receptor del radio SiK.
-* **Procesamiento:** Utiliza un hilo de ejecución secundario (Thread) para leer continuamente los mensajes MAVLink entrantes (`GLOBAL_POSITION_INT`, `VFR_HUD`, `SYS_STATUS`, `HEARTBEAT`).
-* **Simulación:** Incluye una clase interna que genera datos sintéticos de MAVLink para poder probar todo el dashboard sin necesidad de conectar hardware real.
+### 2.2. `telemetry_manager.py` y MAVProxy Router (Integración MAVLink)
+Se encarga de la comunicación con el autopiloto (Pixhawk). Para evitar monopolizar el puerto serial y permitir el uso de Mission Planner en paralelo:
+* **MAVProxy Router:** El sistema levanta un proceso en segundo plano de `mavproxy.py` que lee del puerto USB y lo expone en dos puertos TCP (`5760` para Mission Planner y `5761` para el Dashboard local).
+* **Resolución de Conflictos (System ID):** El Dashboard local utiliza `source_system=254` al crear su conexión `pymavlink`. Mission Planner usa por defecto el 255. Esto es crítico para que ambos GCS (Ground Control Stations) coexistan sin que el drone o el router se confundan enrutando paquetes de respuesta, previniendo desconexiones.
+* **Auto-Desconexión:** Al lanzar Mission Planner, el Dashboard local corta su propia conexión para dar el 100% del ancho de banda y prioridad de lectura a Mission Planner.
 * **Logging:** Todos los mensajes recibidos se guardan en vivo en un archivo CSV dentro de la carpeta de la misión actual.
 
 ### 2.3. `gopro_manager.py` (Control Inalámbrico)

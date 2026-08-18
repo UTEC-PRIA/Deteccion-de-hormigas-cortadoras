@@ -110,7 +110,7 @@ class GoProManager:
             self.is_connected = False
             return {"success": False, "error": str(e)}
 
-    async def connect_wifi_direct(self):
+    async def connect_wifi_direct(self, ssid=None, password=None):
         """
         Connect to GoPro using previously saved WiFi credentials.
         Faster than full BLE pairing — uses nmcli to join the GoPro's WiFi AP directly.
@@ -119,19 +119,22 @@ class GoProManager:
         if self.is_connected:
             return {"success": True, "message": "Already connected"}
 
+        if ssid and password:
+            self._save_credentials(ssid, password)
+
         if not self.wifi_credentials:
             return {"success": False, "error": "No saved WiFi credentials. Use 'Connect Wireless' first to pair via BLE."}
 
-        ssid = self.wifi_credentials["ssid"]
-        password = self.wifi_credentials["password"]
+        conn_ssid = self.wifi_credentials["ssid"]
+        conn_password = self.wifi_credentials["password"]
 
         try:
-            logger.info(f"Connecting directly to GoPro WiFi AP: {ssid}...")
+            logger.info(f"Connecting directly to GoPro WiFi AP: {conn_ssid}...")
 
             # Use nmcli to connect to GoPro's WiFi network
             result = await asyncio.to_thread(
                 subprocess.run,
-                ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+                ["nmcli", "device", "wifi", "connect", conn_ssid, "password", conn_password],
                 capture_output=True, text=True, timeout=30,
             )
 
@@ -162,6 +165,33 @@ class GoProManager:
             self.gopro = None
             self.is_connected = False
             return {"success": False, "error": str(e)}
+
+    async def connect_auto(self, ssid, password):
+        """
+        Hybrid auto-connect: Uses BLE to wake up the GoPro's WiFi (with a timeout),
+        then immediately uses nmcli to connect directly.
+        """
+        if self.is_connected:
+            return {"success": True, "message": "Already connected"}
+
+        self._save_credentials(ssid, password)
+
+        logger.info("Attempting BLE wake up (ignoring HTTP connection errors)...")
+        try:
+            from open_gopro import WirelessGoPro
+            async def quick_ble_wake():
+                g = WirelessGoPro()
+                try:
+                    await asyncio.wait_for(g.open(), timeout=20)
+                    await g.close()
+                except Exception as e:
+                    logger.debug(f"BLE wake phase ended with: {e}")
+            await quick_ble_wake()
+        except Exception as e:
+            logger.debug(f"BLE wake wrapper error: {e}")
+
+        logger.info("Proceeding to force connection via WiFi direct (nmcli)...")
+        return await self.connect_wifi_direct(ssid=ssid, password=password)
 
     async def connect_simulation(self):
         """Start in simulation mode (no hardware needed)."""

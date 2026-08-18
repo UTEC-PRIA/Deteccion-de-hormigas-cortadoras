@@ -80,7 +80,7 @@ class TelemetryManager:
         try:
             from pymavlink import mavutil
             logger.info(f"Connecting to MAVLink on {port} at {baudrate} baud...")
-            self.connection = mavutil.mavlink_connection(port, baud=baudrate)
+            self.connection = mavutil.mavlink_connection(port, baud=baudrate, source_system=254)
             logger.info("Waiting for heartbeat...")
             self.connection.wait_heartbeat(timeout=10)
             logger.info(f"Heartbeat received (system {self.connection.target_system})")
@@ -92,6 +92,43 @@ class TelemetryManager:
             logger.error(f"MAVLink connection failed: {e}")
             self.connection = None
             return False
+
+    async def auto_connect(self, baudrate=None):
+        """
+        Automatically scan all serial ports. If found, start MAVProxy Router
+        to share the port with Mission Planner, and connect to tcp:5761.
+        """
+        if self.is_connected:
+            return True
+
+        # 1. Try TCP connection to MAVProxy first (port 5761 = our app's port)
+        from mavproxy_router import router
+        
+        if router.is_running:
+            logger.info("MAVProxy router is running. Connecting to tcp:localhost:5761...")
+            success = await self.connect(port="tcp:localhost:5761")
+            if success:
+                return True
+        else:
+            try:
+                logger.info("Checking if an external MAVProxy is on tcp:localhost:5761...")
+                success = await self.connect(port="tcp:localhost:5761", baudrate=57600)
+                if success:
+                    logger.info("Connected via MAVProxy TCP router.")
+                    return True
+            except Exception:
+                pass
+
+        # 2. If not running, start MAVProxy router (it will auto-detect USB ports internally)
+        logger.info("Starting MAVProxy router to share connection...")
+        res = await router.start()
+        
+        if res.get("success"):
+            logger.info("MAVProxy router started successfully. Connecting to tcp:localhost:5761...")
+            return await self.connect(port="tcp:localhost:5761")
+            
+        logger.error(f"Auto-connect failed: {res.get('error', 'Could not start MAVProxy')}")
+        return False
 
     async def connect_simulation(self):
         """Start in simulation mode with fake telemetry data."""
@@ -390,14 +427,16 @@ class TelemetryManager:
 
     @staticmethod
     def list_serial_ports():
-        """List available serial ports on the system."""
+        """List available serial ports on the system (USB only)."""
         ports = []
         try:
             import serial.tools.list_ports
             for p in serial.tools.list_ports.comports():
-                ports.append({"device": p.device, "description": p.description})
+                # Only include USB-connected serial ports (SiK radio, Pixhawk, etc.)
+                if any(x in p.device for x in ['USB', 'ACM']):
+                    ports.append({"device": p.device, "description": p.description})
         except ImportError:
             import glob
-            for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyS*"]:
+            for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
                 ports.extend([{"device": d, "description": ""} for d in glob.glob(pattern)])
         return ports

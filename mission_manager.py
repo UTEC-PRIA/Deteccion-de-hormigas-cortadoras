@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+import asyncio
 
 from telemetry_manager import TelemetryManager
 from gopro_manager import GoProManager
@@ -38,6 +39,10 @@ class MissionManager:
         self.current_mission = None  # dict with mission config
         self.download_progress = {"current": 0, "total": 0, "filename": "", "percent": 0}
         self._state_listeners = []
+        try:
+            self._main_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._main_loop = None
 
         # Listen for telemetry state changes
         self.telemetry.on_state_change(self._on_flight_state_change)
@@ -59,6 +64,16 @@ class MissionManager:
         """React to telemetry flight state changes."""
         if new_state == "IN_FLIGHT" and self.state == "PRE_FLIGHT":
             self._set_state("IN_FLIGHT")
+        elif new_state in ("TAKEOFF", "IN_FLIGHT") and not self.gopro.capture_active:
+            # Auto-start capture using the mission's configured mode
+            if self._main_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self.start_capture(mode=self.current_mission.get("capture_mode", "photo") if self.current_mission else "photo",
+                                       interval=self.current_mission.get("capture_interval", 2) if self.current_mission else 2),
+                    self._main_loop
+                )
+            if self.state == "PRE_FLIGHT":
+                self._set_state("IN_FLIGHT")
         elif new_state in ("RTL", "LANDING") and self.state == "IN_FLIGHT":
             self._set_state("LANDING")
         elif new_state == "LANDED" and self.state in ("IN_FLIGHT", "LANDING"):
@@ -148,25 +163,35 @@ class MissionManager:
 
         return success
 
-    async def connect_gopro(self, mode="wireless", simulation=False):
+    async def connect_gopro(self, mode="wireless", simulation=False, ssid=None, password=None):
         """Connect GoPro wirelessly (BLE→WiFi) or via simulation."""
         if simulation:
             result = await self.gopro.connect_simulation()
             return result.get("success", False) if isinstance(result, dict) else result
-        elif mode == "wifi_direct":
-            result = await self.gopro.connect_wifi_direct()
+        elif mode == "auto":
+            result = await self.gopro.connect_auto(ssid=ssid, password=password)
+            return result.get("success", False) if isinstance(result, dict) else result
+        elif mode == "wifi_direct" or mode == "wifi_manual":
+            result = await self.gopro.connect_wifi_direct(ssid=ssid, password=password)
             return result.get("success", False) if isinstance(result, dict) else result
         else:
             result = await self.gopro.connect_wireless()
             return result.get("success", False) if isinstance(result, dict) else result
 
-    async def start_capture(self):
-        """Start GoPro capture with mission config."""
+    async def start_capture(self, mode: str = None, interval: int = None):
+        """Start GoPro capture. Uses mission config if mode/interval not specified."""
         if not self.current_mission:
             return {"success": False, "error": "No mission configured"}
 
-        mode = self.current_mission.get("capture_mode", "photo")
-        interval = self.current_mission.get("capture_interval", 2)
+        if mode is None:
+            mode = self.current_mission.get("capture_mode", "photo")
+        if interval is None:
+            interval = self.current_mission.get("capture_interval", 2)
+
+        # Store the chosen mode back to mission
+        self.current_mission["capture_mode"] = mode
+        self.current_mission["capture_interval"] = interval
+
         result = await self.gopro.configure_and_start_capture(mode, interval)
 
         if result.get("success"):

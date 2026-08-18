@@ -9,15 +9,15 @@ La GoPro ahora se conecta de manera **100% inalámbrica**, eliminando la necesid
 1. **Conexión Inicial (BLE + WiFi)**: Se escanea y empareja la GoPro vía Bluetooth de bajo consumo (BLE), lo que enciende el punto de acceso WiFi de la cámara automáticamente para la configuración de captura.
 2. **Reconexión Post-Vuelo (WiFi Directo)**: Tras el aterrizaje, el sistema se reconecta automáticamente al WiFi de la GoPro (usando las credenciales guardadas previamente) para realizar la descarga de las imágenes y la sincronización con la telemetría.
 
-## ⚙️ Requisitos y Dependencias
-* Python 3.8+
-* Módulo de telemetría SiK conectado por USB (`/dev/ttyUSB0`) para lectura de MAVLink
-* Interfaz de red WiFi gestionada mediante `nmcli` (NetworkManager) en Linux
-* Dependencias de Python: `pymavlink`, `open-gopro`, `fastapi`, `websockets`, `Pillow`, `aiofiles`, `uvicorn`
+## ⚙️ Instalación Automática (One-Click)
+Para facilitar el despliegue en computadoras base (ej. laptops Ubuntu en campo), proveemos un instalador automático que configura dependencias, Python y un icono de acceso directo en el Escritorio.
 
 ```bash
-pip install -r requirements.txt
+chmod +x scripts/install.sh
+./scripts/install.sh
 ```
+
+El script verificará el estado final y colocará un icono de una "hormiga" en tu escritorio (`DroneMissionControl.desktop`) que ejecutará automáticamente el servidor y abrirá tu navegador.
 
 > **[📝 Ver Guía Completa para Desarrolladores (DEVELOPER_GUIDE.md)](DEVELOPER_GUIDE.md)**
 > Para una explicación técnica profunda de la arquitectura, la máquina de estados, el manejo de MAVLink y recomendaciones de futuras mejoras para el equipo de PRIA, lee la guía para desarrolladores.

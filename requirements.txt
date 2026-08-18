@@ -7,3 +7,5 @@ Pillow
 python-multipart
 aiofiles
 websockets
+MAVProxy
+future
