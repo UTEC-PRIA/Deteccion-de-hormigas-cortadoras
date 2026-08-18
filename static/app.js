@@ -354,7 +354,7 @@ async function checkMissionPlannerStatus() {
         const el = $('mpStatusText');
         if (!el) return;
         if (res.installed) {
-            el.innerHTML = `<span style="color:var(--green)">✅ Instalado</span> — Conectar MP a <strong>tcp:localhost:5760</strong>`;
+            el.innerHTML = `<span style="color:var(--green)">✅ Instalado</span> — Conecta MP directamente al <strong>puerto USB (/dev/ttyUSB0)</strong>`;
             $('btnLaunchMP').disabled = false;
         } else {
             el.innerHTML = `<span style="color:var(--amber, #f59e0b)">⚠️ No instalado.</span> Ejecuta <code>scripts/install_mission_planner.sh</code>`;
