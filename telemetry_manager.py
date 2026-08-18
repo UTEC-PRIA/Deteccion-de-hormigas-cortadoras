@@ -41,6 +41,9 @@ class TelemetryManager:
             "flight_mode": "UNKNOWN", "armed": False,
             "gps_fix": 0, "satellites": 0,
             "timestamp": None,
+            "mission_count": 0,
+            "mission_current": 0,
+            "mission_loaded": False,
         }
         self.flight_state = "UNKNOWN"  # DISARMED, ARMED, TAKEOFF, IN_FLIGHT, RTL, LANDING, LANDED
         self.flight_trace = []  # List of {lat, lon} for map trace
@@ -101,20 +104,20 @@ class TelemetryManager:
         if self.is_connected:
             return True
 
-        # 1. Try TCP connection to MAVProxy first (port 5761 = our app's port)
+        # 1. Try UDP connection to MAVProxy first (port 14551 = our app's port)
         from mavproxy_router import router
         
         if router.is_running:
-            logger.info("MAVProxy router is running. Connecting to tcp:localhost:5761...")
-            success = await self.connect(port="tcp:localhost:5761")
+            logger.info("MAVProxy router is running. Connecting to udpin:0.0.0.0:14551...")
+            success = await self.connect(port="udpin:0.0.0.0:14551")
             if success:
                 return True
         else:
             try:
-                logger.info("Checking if an external MAVProxy is on tcp:localhost:5761...")
-                success = await self.connect(port="tcp:localhost:5761", baudrate=57600)
+                logger.info("Checking if an external MAVProxy is sending UDP to 14551...")
+                success = await self.connect(port="udpin:0.0.0.0:14551", baudrate=57600)
                 if success:
-                    logger.info("Connected via MAVProxy TCP router.")
+                    logger.info("Connected via UDP.")
                     return True
             except Exception:
                 pass
@@ -124,8 +127,8 @@ class TelemetryManager:
         res = await router.start()
         
         if res.get("success"):
-            logger.info("MAVProxy router started successfully. Connecting to tcp:localhost:5761...")
-            return await self.connect(port="tcp:localhost:5761")
+            logger.info("MAVProxy router started successfully. Connecting to udpin:0.0.0.0:14551...")
+            return await self.connect(port="udpin:0.0.0.0:14551")
             
         logger.error(f"Auto-connect failed: {res.get('error', 'Could not start MAVProxy')}")
         return False
@@ -241,6 +244,14 @@ class TelemetryManager:
                 armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                 self.current_data["armed"] = armed
                 self._detect_state_change()
+            elif msg_type == "MISSION_COUNT":
+                self.current_data["mission_count"] = msg.count
+                logger.info(f"Incoming mission detected: {msg.count} waypoints.")
+            elif msg_type == "MISSION_ACK":
+                self.current_data["mission_loaded"] = True
+                logger.info("Mission successfully loaded and ACKed by drone.")
+            elif msg_type == "MISSION_CURRENT":
+                self.current_data["mission_current"] = msg.seq
 
     def _update_trace(self):
         d = self.current_data

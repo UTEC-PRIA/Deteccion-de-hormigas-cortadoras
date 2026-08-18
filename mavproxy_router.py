@@ -98,9 +98,9 @@ class MAVProxyRouter:
             "mavproxy.py",
             f"--master={port}",
             f"--baudrate={baudrate}",
-            "--out=tcpin:0.0.0.0:5760",   # Mission Planner connects here
-            "--out=tcpin:0.0.0.0:5761",   # Our app connects here
-            "--out=udpout:0.0.0.0:14550", # QGC / extra clients
+            "--out=udp:127.0.0.1:14550",  # Mission Planner connects here (via UDP)
+            "--out=udp:127.0.0.1:14551",  # Our app connects here (via udpin)
+            "--streamrate=-1",            # Let MP handle stream rates
             "--daemon",
             "--non-interactive",
             "--default-modules=''",

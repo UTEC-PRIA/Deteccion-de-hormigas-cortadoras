@@ -228,11 +228,8 @@ async def api_mp_launch():
     display = os.environ.get("DISPLAY", ":0")
     env["DISPLAY"] = display
 
-    # Disconnect local telemetry to prioritize Mission Planner and avoid data splitting
-    await manager.telem.disconnect()
-    
-    # Completely stop the MAVProxy Router to release the USB port for Mission Planner
-    mavproxy_router.stop()
+    # MAVProxy router continues running in UDP mode.
+    # Telemetry manager continues listening on udpin:0.0.0.0:14551 to track mission state.
 
     # Use native mono to launch Mission Planner
     subprocess.Popen(["mono", exe], env=env, start_new_session=True)

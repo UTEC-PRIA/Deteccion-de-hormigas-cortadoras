@@ -354,7 +354,7 @@ async function checkMissionPlannerStatus() {
         const el = $('mpStatusText');
         if (!el) return;
         if (res.installed) {
-            el.innerHTML = `<span style="color:var(--green)">✅ Instalado</span> — Conecta MP directamente al <strong>puerto USB (/dev/ttyUSB0)</strong>`;
+            el.innerHTML = `<span style="color:var(--green)">✅ Instalado</span> — Conecta MP a <strong>UDP (14550)</strong>`;
             $('btnLaunchMP').disabled = false;
         } else {
             el.innerHTML = `<span style="color:var(--amber, #f59e0b)">⚠️ No instalado.</span> Ejecuta <code>scripts/install_mission_planner.sh</code>`;
@@ -381,6 +381,10 @@ function updateTelemetryUI(data, flightState) {
     $('valHdg').innerHTML = `${Math.round(data.heading || 0)}<span class="telemetry-unit">°</span>`;
     $('valSat').textContent = data.satellites || 0;
     $('valFix').textContent = data.gps_fix >= 3 ? '3D Fix' : data.gps_fix >= 2 ? '2D' : 'No Fix';
+    
+    if ($('valWps')) {
+        $('valWps').textContent = data.mission_count || 0;
+    }
 
     const badge = $('flightModeBadge');
     const mode = data.flight_mode || 'UNKNOWN';
