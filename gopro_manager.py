@@ -67,12 +67,8 @@ class GoProManager:
         1. Scans for GoPro devices via BLE
         2. Pairs if not previously paired
         3. Enables the GoPro's WiFi AP via BLE command
-        4. Connects the computer to the GoPro's WiFi
+        4. Connects the computer to the GoPro's WiFi using nmcli for reliability
         5. Ready for HTTP commands
-
-        Args:
-            target: Optional GoPro name/serial to connect to a specific camera.
-                    If None, connects to the first GoPro found.
         """
         if self.is_connected:
             return {"success": True, "message": "Already connected"}
@@ -81,28 +77,49 @@ class GoProManager:
             from open_gopro import WirelessGoPro
 
             logger.info("Scanning for GoPro via BLE...")
+            # We disable internal wifi handling to use nmcli directly (much more reliable on Linux)
             if target:
-                self.gopro = WirelessGoPro(target=target)
+                g = WirelessGoPro(target=target, enable_wifi=False)
             else:
-                self.gopro = WirelessGoPro()
+                g = WirelessGoPro(enable_wifi=False)
 
-            await self.gopro.open()
-            self.is_connected = True
-            self.mode = "wireless"
-            self.is_simulation = False
+            await g.open()
+
+            # Manually enable the WiFi AP via BLE
+            try:
+                # Need to use the enable_wifi_ap command
+                logger.info("Enabling WiFi AP via BLE...")
+                await g.ble_command.enable_wifi_ap(enable=True)
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.warning(f"Failed to enable WiFi AP via BLE: {e}")
 
             # Save WiFi credentials for future reference
+            ssid = None
+            password = None
             try:
-                ssid_resp = await self.gopro.ble_command.get_wifi_ssid()
-                pass_resp = await self.gopro.ble_command.get_wifi_password()
+                ssid_resp = await g.ble_command.get_wifi_ssid()
+                pass_resp = await g.ble_command.get_wifi_password()
                 ssid = ssid_resp.data if hasattr(ssid_resp, 'data') else str(ssid_resp)
                 password = pass_resp.data if hasattr(pass_resp, 'data') else str(pass_resp)
                 self._save_credentials(ssid, password)
             except Exception as e:
                 logger.warning(f"Could not save WiFi credentials: {e}")
 
-            logger.info("GoPro connected wirelessly (BLE + WiFi).")
-            return {"success": True, "message": "Connected wirelessly via BLE + WiFi"}
+            # Close BLE connection as we'll use WiFi (WiredGoPro) for the rest
+            await g.close()
+            
+            if not ssid or not password:
+                # If we couldn't get credentials, try connecting if we already have them saved
+                if self.has_wifi_credentials():
+                    ssid = self.wifi_credentials["ssid"]
+                    password = self.wifi_credentials["password"]
+                else:
+                    return {"success": False, "error": "Could not retrieve WiFi credentials from GoPro."}
+
+            logger.info("GoPro paired via BLE. Handing over to WiFi connection...")
+            # Use our existing highly reliable nmcli connection method
+            return await self.connect_wifi_direct(ssid=ssid, password=password)
 
         except Exception as e:
             logger.error(f"Wireless connection failed: {e}")
