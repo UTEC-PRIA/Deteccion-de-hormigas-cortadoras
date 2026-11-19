@@ -118,6 +118,18 @@ sequenceDiagram
     Dashboard-->>Operador: Fotos listas para fotogrametria en WebODM
 ```
 
+### Diagrama D: Arquitectura de la Fase Futura - Navegacion Autonoma por Waypoints
+```text
+Genera un diagrama Mermaid (sequenceDiagram o flowchart LR) que describa la futura fase de navegacion autonoma por waypoints:
+1. GCS / Dashboard calcula la grilla de escaneo fotogrametrico (pasadas paralelas con 80% solape a 25m de altura sobre el campo de hormigas).
+2. GCS envia la lista de waypoints via MAVLink (MISSION_ITEM_INT) por la radio SiK 915 MHz a la Pixhawk 2.4.8.
+3. El piloto conmuta a modo AUTO: el dron despega a 25m (NAV_TAKEOFF).
+4. Al alcanzar el Waypoint 1, la GoPro inicia grabacion continua de video 4K 30 FPS.
+5. El dron recorre la grilla manteniendo rumbo y altura constante mientras la radio emite telemetria a 4 Hz.
+6. Si la bateria LiPo 3S cae a <10.5V o se completa la grilla, se dispara el fail-safe RTL (Return to Launch).
+7. Al aterrizar, se conecta el cable USB y se extraen fotogramas a 1 FPS con metadatos DJI Mini 2 SE.
+```
+
 ---
 
 ## 3. Prompts para Generadores de Imagenes (Midjourney / DALL-E / Imagen 3)

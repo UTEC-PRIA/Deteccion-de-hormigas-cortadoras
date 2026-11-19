@@ -100,7 +100,14 @@ El programa abrira automaticamente su navegador en:
 | **GimbalRollDegree** | `0.0` | Horizonte estabilizado por la propia GoPro. |
 | **FlightYawDegree** | `145.8` | Rumbo de avance de la aeronave. |
 
-*Nota sobre Videos:* Si en lugar de fotos se grabo video continuo (`.MP4`), el sistema genera automaticamente el archivo de subtitulos de telemetria `.SRT` correspondiente.
+*Captura de Video 4K 30 FPS y Division Automatica de Fotogramas:*
+La camara se configura siempre de manera automatica en **Modo Video 4K a 30 FPS** con estabilizacion electronica HyperSmooth integrada. Al aterrizar y conectar el cable USB, el sistema:
+1. Descarga el video `.MP4` completo a `vuelos/NOMBRE_MISION/video/`.
+2. Divide el video en imagenes fijas de alta definicion (4K, 3840x2160) al intervalo seleccionado (1 foto/s = 90% solape, 2 fotos/s o 0.5 fotos/s).
+3. Calcula la marca de tiempo sub-segundo exacta de cada fotograma ($T_k = T_{inicio} + \frac{k}{fps}$).
+4. Interpola la posicion GPS precisa del UAV desde `telemetria.csv`.
+5. Inyecta por lotes los metadatos nativos **DJI Mini 2 SE** en cada imagen generada dentro de `vuelos/NOMBRE_MISION/fotos/`.
+6. Genera el archivo de subtitulos de telemetria `.SRT` asociado al video.
 
 ---
 
@@ -111,11 +118,13 @@ El programa abrira automaticamente su navegador en:
 * **Estado de Grabacion en Vivo Verificado:** [docs/imagenes/dashboard_grabando_en_vivo.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_grabando_en_vivo.png)
 * **Estado en Espera (Standby):** [docs/imagenes/dashboard_en_espera.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_en_espera.png)
 
-### Ejemplo de Salida Generada
-En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/ejemplos_salida/vuelo_mision_campo_01/) se incluye un conjunto de datos sinteticos para pruebas:
+### Ejemplos de Salida y Generador de Datos Artificiales
+En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/ejemplos_salida/vuelo_mision_campo_01/) y [datos_artificiales/mision_simulada_4k/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/datos_artificiales/mision_simulada_4k/) se incluyen conjuntos de datos sinteticos para pruebas inmediatas:
 * `telemetria.csv`: Archivo de telemetria a 4 Hz con coordenadas, altura, actitud y voltaje de bateria 3S.
-* `fotos/`: Fotografias aereas sinteticas con metadatos reales nativos de **DJI Mini 2 SE** inyectados (verificables mediante ExifTool o software fotogrametrico WebODM).
+* `video_vuelo_mision_01.MP4`: Video 4K a 30 FPS de patrulla aerea.
 * `video_vuelo_mision_01.SRT`: Archivo de subtitulos de telemetria por segundo en formato DJI.
+* `fotos/`: Fotografias aereas 4K extraidas del video con metadatos reales nativos de **DJI Mini 2 SE** inyectados (verificables mediante ExifTool o software fotogrametrico WebODM).
+* `generar_datos_artificiales.py`: Script para regenerar misiones sinteticas completas con cualquier duracion (`py generar_datos_artificiales.py [segundos]`).
 
 ---
 
@@ -130,3 +139,25 @@ Para generar nuevos diagramas de arquitectura (Mermaid, PlantUML) o ilustracione
 
 El manual operativo completo con diagramas y protocolo de campo impreso se encuentra en la raiz del repositorio:  
 **`Manual_Operativo_Telemetria_GoPro_DJI.pdf`**
+
+---
+
+## 9. Siguientes Pasos: Sistema de Navegacion Autonoma por Waypoints
+
+Como siguiente fase de desarrollo para el proyecto de deteccion aerea de hormigas cortadoras con el cuadricoptero F450, se planifica la implementacion de navegacion autonoma por grilla de escaneo:
+
+1. **Planificador de Mision Fotogrametrica (GCS / Dashboard):**
+   * Definicion en mapa interactivo de poligonos de inspeccion sobre pasturas y montes.
+   * Calculo automatico de pasadas paralelas y waypoints segun GSD deseado (~0.7 cm/pixel a 25m de altura) y solapamiento del 80%-90%.
+2. **Carga y Ejecucion de Misiones MAVLink en Pixhawk:**
+   * Envio de waypoints (`MISSION_ITEM_INT`) a traves del enlace de telemetria de 915 MHz.
+   * Conmutacion al modo de vuelo `AUTO` para despegue, barrido de grilla y retorno.
+3. **Sincronizacion de Eventos de Carga Util:**
+   * Inicio automatico de grabacion de video 4K 30 FPS al alcanzar el primer waypoint de relevamiento.
+   * Finalizacion de grabacion y activacion automatica de `RTL` (Return to Launch) con aterrizaje asistido (`LAND`) al culminar el escaneo.
+4. **Protecciones Fail-Safe Avanzadas:**
+   * Retorno automatico inmediato (`FS_BATT_ENABLE = 2`) si la bateria LiPo 3S desciende de 10.5 V (3.5 V/celda).
+   * Geocerca perimetral de contencion (`FENCE_ENABLE = 1`).
+
+Para consultar la especificacion tecnica y arquitectura completa de esta futura fase, revise el documento:  
+**[docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md)**

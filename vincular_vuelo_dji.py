@@ -9,12 +9,14 @@ Compatible con Windows y Ubuntu.
 
 import sys
 import os
+import time
 import argparse
 import subprocess
 import shutil
 import csv
 from datetime import datetime, timezone, timedelta
 import bisect
+import cv2
 from pymavlink import mavutil
 
 def obtener_ruta_exiftool():
@@ -266,6 +268,181 @@ def escribir_metadatos_dji(ruta_img, telem):
     res = subprocess.run(cmd, capture_output=True, text=True)
     return res.returncode == 0
 
+def escribir_metadatos_dji_batch(metadatos_lista):
+    """
+    Escribe metadatos EXIF y XMP en formato nativo DJI Mini 2 SE en lote (batch)
+    usando un archivo CSV temporal y una unica llamada a ExifTool (-csv=...).
+    Es significativamente mas rapido para cientos o miles de fotografias.
+    """
+    if not metadatos_lista:
+        return 0
+
+    directorio_base = os.path.dirname(metadatos_lista[0][0])
+    ruta_csv_temp = os.path.join(directorio_base, "_batch_dji_metadata.csv")
+
+    encabezados = [
+        "SourceFile", "Make", "Model",
+        "GPSLatitude", "GPSLatitudeRef",
+        "GPSLongitude", "GPSLongitudeRef",
+        "GPSAltitude", "GPSAltitudeRef", "GPSMapDatum",
+        "XMP-drone-dji:AbsoluteAltitude", "XMP-drone-dji:RelativeAltitude",
+        "XMP-drone-dji:FlightRollDegree", "XMP-drone-dji:FlightPitchDegree", "XMP-drone-dji:FlightYawDegree",
+        "XMP-drone-dji:GimbalRollDegree", "XMP-drone-dji:GimbalPitchDegree", "XMP-drone-dji:GimbalYawDegree",
+        "XMP-drone-dji:FlightXSpeed", "XMP-drone-dji:FlightYSpeed", "XMP-drone-dji:FlightZSpeed",
+        "XMP-drone-dji:CamReverse", "XMP-drone-dji:GimbalReverse",
+        "DateTimeOriginal", "CreateDate"
+    ]
+
+    filas = []
+    for item in metadatos_lista:
+        ruta_img = os.path.abspath(item[0])
+        telem = item[1]
+        dt_str = item[2] if len(item) > 2 and item[2] else None
+        if not dt_str:
+            dt_utc = datetime.fromtimestamp(telem.timestamp, tz=timezone.utc)
+            dt_str = dt_utc.strftime("%Y:%m:%d %H:%M:%S")
+
+        lat_ref = "N" if telem.lat >= 0 else "S"
+        lon_ref = "E" if telem.lon >= 0 else "W"
+
+        filas.append([
+            ruta_img, "DJI", "Mini 2 SE",
+            f"{abs(telem.lat):.7f}", lat_ref,
+            f"{abs(telem.lon):.7f}", lon_ref,
+            f"{telem.alt_msl:.2f}", 0, "WGS-84",
+            f"+{telem.alt_msl:.2f}", f"+{telem.rel_alt:.2f}",
+            f"{telem.roll:.1f}", f"{telem.pitch:.1f}", f"{telem.yaw:.1f}",
+            "0.0", "-90.0", f"{telem.yaw:.1f}",
+            f"{telem.vx:.1f}", f"{telem.vy:.1f}", f"{telem.vz:.1f}",
+            0, 0,
+            dt_str, dt_str
+        ])
+
+    try:
+        with open(ruta_csv_temp, "w", newline="", encoding="utf-8") as f:
+            escritor = csv.writer(f)
+            escritor.writerow(encabezados)
+            escritor.writerows(filas)
+
+        cmd = [
+            EXIFTOOL_CMD,
+            "-overwrite_original",
+            f"-csv={ruta_csv_temp}",
+            directorio_base
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if os.path.exists(ruta_csv_temp):
+            try: os.remove(ruta_csv_temp)
+            except Exception: pass
+        return len(filas) if res.returncode == 0 else 0
+    except Exception as e:
+        print(f"[ERROR] Fallo en escritura batch de ExifTool: {e}")
+        if os.path.exists(ruta_csv_temp):
+            try: os.remove(ruta_csv_temp)
+            except Exception: pass
+        return 0
+
+def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_segundos=1.0, offset=0.0, callback_progreso=None):
+    """
+    Extrae fotogramas de un video 4K a intervalos regulares (por defecto 1 FPS),
+    calcula la marca de tiempo exacta de cada fotograma, interpola los datos de
+    telemetria MAVLink e incrusta metadatos nativos DJI Mini 2 SE en formato EXIF/XMP.
+    Tambien genera el archivo de subtitulos .SRT correspondiente.
+    """
+    if not os.path.exists(ruta_video):
+        raise FileNotFoundError(f"No se encuentra el archivo de video: {ruta_video}")
+
+    os.makedirs(carpeta_salida, exist_ok=True)
+    nombre_base = os.path.splitext(os.path.basename(ruta_video))[0]
+
+    # 1. Obtener timestamp inicial de inicio de grabacion del video (UTC)
+    cmd = [EXIFTOOL_CMD, "-s3", "-d", "%Y:%m:%d %H:%M:%S", "-CreateDate", ruta_video]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    dt_str = res.stdout.strip()
+    t_inicio = None
+    if dt_str:
+        try:
+            dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            t_inicio = dt.timestamp()
+        except Exception:
+            pass
+    if t_inicio is None:
+        t_inicio = os.path.getmtime(ruta_video)
+
+    t_inicio += offset
+
+    # 2. Abrir video con OpenCV
+    cap = cv2.VideoCapture(ruta_video)
+    if not cap.isOpened():
+        raise RuntimeError(f"No se pudo abrir el video con OpenCV: {ruta_video}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duracion_sec = total_frames / fps if total_frames > 0 else 0
+    paso_frames = max(1, int(round(fps * intervalo_segundos)))
+    total_estimadas = max(1, total_frames // paso_frames) if total_frames > 0 else 1
+
+    print(f"[*] Analizando video: {os.path.basename(ruta_video)}")
+    print(f"    Resolucion: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} @ {fps:.2f} FPS")
+    print(f"    Duracion: {duracion_sec:.2f} s ({total_frames} cuadros)")
+    print(f"    Intervalo de extraccion: {intervalo_segundos:.2f} s (~{total_estimadas} fotos)")
+
+    metadatos_batch = []
+    fotos_guardadas = []
+    frame_idx = 0
+    num_foto = 1
+
+    while True:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        segundo_offset = frame_idx / fps
+        t_frame = t_inicio + segundo_offset
+
+        nombre_foto = f"{nombre_base}_{num_foto:04d}.JPG"
+        ruta_foto = os.path.join(carpeta_salida, nombre_foto)
+
+        # Guardar en alta calidad (95%)
+        cv2.imwrite(ruta_foto, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        fotos_guardadas.append(ruta_foto)
+
+        telem = interpolar_telemetria(puntos, t_frame)
+        if telem:
+            dt_utc_str = datetime.fromtimestamp(t_frame, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+            metadatos_batch.append((ruta_foto, telem, dt_utc_str))
+
+        if callback_progreso and total_estimadas > 0:
+            pct = min(90, int((num_foto / total_estimadas) * 80) + 10)
+            callback_progreso(pct, f"Extrayendo fotograma {num_foto}/{total_estimadas} ({nombre_foto})...")
+
+        num_foto += 1
+        frame_idx += paso_frames
+        if total_frames > 0 and frame_idx >= total_frames:
+            break
+
+    cap.release()
+
+    # 3. Escribir metadatos nativos DJI Mini 2 SE en todas las fotos extraidas
+    print(f"[*] Incrustando metadatos nativos DJI Mini 2 SE en {len(metadatos_batch)} fotografias...")
+    if callback_progreso:
+        callback_progreso(92, f"Incrustando metadatos DJI Mini 2 SE en {len(metadatos_batch)} fotos...")
+
+    etiquetadas = escribir_metadatos_dji_batch(metadatos_batch)
+
+    # 4. Generar subtitulos SRT para el video
+    generar_srt_dji(ruta_video, puntos)
+
+    if callback_progreso:
+        callback_progreso(100, f"Completado: {len(fotos_guardadas)} fotos generadas y etiquetadas en formato DJI.")
+
+    print(f"[+] Extraccion completada con exito: {len(fotos_guardadas)} fotos generadas.")
+    print(f"[+] Fotos etiquetadas con telemetria DJI: {etiquetadas}")
+    return fotos_guardadas
+
 def generar_srt_dji(ruta_video, puntos):
     """Genera subtitulos de telemetria .SRT para video en formato DJI."""
     base, _ = os.path.splitext(ruta_video)
@@ -311,6 +488,9 @@ def main():
     parser = argparse.ArgumentParser(description="Etiquetador de fotos/videos a formato DJI Mini 2 SE")
     parser.add_argument("--log", help="Ruta al archivo .CSV, .BIN o .tlog de telemetria")
     parser.add_argument("--media", help="Carpeta con fotos o archivo de video MP4")
+    parser.add_argument("--interval", type=float, default=1.0, help="Intervalo en segundos para extraer fotos de video (default: 1.0s = 1 FPS)")
+    parser.add_argument("--output", help="Carpeta de destino para las fotos extraidas")
+    parser.add_argument("--only-srt", action="store_true", help="Solo generar archivo .SRT para video sin extraer fotos")
     parser.add_argument("--offset", type=float, default=0.0, help="Ajuste manual de segundos si es necesario")
     args = parser.parse_args()
 
@@ -343,12 +523,27 @@ def main():
         if sys.stdin.isatty(): input("\nPresione ENTER para salir...")
         return 1
 
+    # Caso 1: Archivo de video MP4 / MOV
     if os.path.isfile(media_path) and media_path.lower().endswith((".mp4", ".mov")):
-        generar_srt_dji(media_path, puntos)
+        if args.only_srt:
+            generar_srt_dji(media_path, puntos)
+        else:
+            carpeta_out = args.output
+            if not carpeta_out:
+                dir_video = os.path.dirname(media_path) or "."
+                carpeta_out = os.path.join(dir_video, "fotos")
+            dividir_video_en_imagenes_dji(
+                ruta_video=media_path,
+                puntos=puntos,
+                carpeta_salida=carpeta_out,
+                intervalo_segundos=args.interval,
+                offset=args.offset
+            )
         print("\n[+] Proceso completado exitosamente.")
         if sys.stdin.isatty(): input("\nPresione ENTER para finalizar...")
         return 0
 
+    # Caso 2: Carpeta con fotos JPG / DNG
     if os.path.isdir(media_path):
         archivos = [f for f in os.listdir(media_path) if f.lower().endswith((".jpg", ".jpeg", ".dng"))]
         archivos.sort()
@@ -359,21 +554,20 @@ def main():
             return 1
 
         print(f"\n[*] Procesando {len(archivos)} fotografias...")
-        exitos = 0
+        metadatos_batch = []
         for i, nombre in enumerate(archivos, 1):
             ruta_foto = os.path.join(media_path, nombre)
             t_foto = obtener_timestamp_imagen(ruta_foto) + args.offset
             telem = interpolar_telemetria(puntos, t_foto)
 
             if telem:
-                ok = escribir_metadatos_dji(ruta_foto, telem)
-                if ok:
-                    exitos += 1
-                    print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m, Pitch: -90.0° [DJI OK]")
-                else:
-                    print(f"  [{i}/{len(archivos)}] {nombre} -> Error al escribir metadatos con ExifTool.")
+                dt_str = datetime.fromtimestamp(t_foto, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+                metadatos_batch.append((ruta_foto, telem, dt_str))
+                print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m [DJI OK]")
             else:
                 print(f"  [{i}/{len(archivos)}] {nombre} -> Fuera de rango de tiempo del registro.")
+
+        exitos = escribir_metadatos_dji_batch(metadatos_batch)
 
         print("\n=================================================================")
         print(f"   RESUMEN: {exitos} de {len(archivos)} fotografias etiquetadas.")

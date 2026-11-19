@@ -13,3 +13,4 @@ pyserial
 psutil
 requests
 reportlab
+opencv-python

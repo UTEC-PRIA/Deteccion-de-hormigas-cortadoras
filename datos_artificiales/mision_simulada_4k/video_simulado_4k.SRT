@@ -1,0 +1,20 @@
+1
+0:00:00,000 --> 0:00:01,000
+[latitude: -34.895382] [longitude: -56.162168] [rel_alt: 23.750 abs_alt: 68.750] [flight_yaw: 11.4] [iso: 100] [shutter: 1/240]
+
+2
+0:00:01,000 --> 0:00:02,000
+[latitude: -34.895382] [longitude: -56.162168] [rel_alt: 23.750 abs_alt: 68.750] [flight_yaw: 11.4] [iso: 100] [shutter: 1/240]
+
+3
+0:00:02,000 --> 0:00:03,000
+[latitude: -34.895382] [longitude: -56.162168] [rel_alt: 23.750 abs_alt: 68.750] [flight_yaw: 11.4] [iso: 100] [shutter: 1/240]
+
+4
+0:00:03,000 --> 0:00:04,000
+[latitude: -34.895382] [longitude: -56.162168] [rel_alt: 23.750 abs_alt: 68.750] [flight_yaw: 11.4] [iso: 100] [shutter: 1/240]
+
+5
+0:00:04,000 --> 0:00:05,000
+[latitude: -34.895382] [longitude: -56.162168] [rel_alt: 23.750 abs_alt: 68.750] [flight_yaw: 11.4] [iso: 100] [shutter: 1/240]
+

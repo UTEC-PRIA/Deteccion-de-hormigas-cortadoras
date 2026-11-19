@@ -28,6 +28,8 @@ from vincular_vuelo_dji import (
     cargar_desde_csv,
     interpolar_telemetria,
     escribir_metadatos_dji,
+    escribir_metadatos_dji_batch,
+    dividir_video_en_imagenes_dji,
     generar_srt_dji,
     obtener_timestamp_imagen
 )
@@ -81,6 +83,7 @@ class EstadoSistema:
         self.gopro_bateria = "--"
         self.gopro_grabando = False
         self.fotos_previas = set()
+        self.intervalo_fotos_seg = 1.0
 
         # Proceso post-vuelo
         self.estado_proceso = "LISTO"
@@ -98,14 +101,34 @@ MODOS_ARDUPILOT = {
     13: 'SPORT', 14: 'FLIP', 15: 'AUTOTUNE', 16: 'POSHOLD', 17: 'BRAKE'
 }
 
+def configurar_gopro_video_4k30(ip):
+    """
+    Configura la GoPro HERO13 en modo Video a 4K 30 FPS de forma automatica:
+    - Grupo Preset 1000: Video
+    - Ajuste 2 (Resolucion) = 1: 4K (3840x2160)
+    - Ajuste 3 (Tasa de cuadros) = 8: 30 FPS
+    """
+    try:
+        requests.get(f"http://{ip}:8080/gopro/camera/control/wired_usb?p=1", timeout=1.5)
+        requests.get(f"http://{ip}:8080/gopro/camera/presets/set_group?id=1000", timeout=1.5)
+        requests.get(f"http://{ip}:8080/gopro/camera/setting?setting=2&option=1", timeout=1.5)
+        requests.get(f"http://{ip}:8080/gopro/camera/setting?setting=3&option=8", timeout=1.5)
+        return True
+    except Exception:
+        return False
+
 def activar_shutter_gopro(ip, iniciar=True):
     """
     Envia la orden de iniciar/detener grabacion a la GoPro y VERIFICA
     activamente contra el sensor interno de la camara (status 10).
+    Siempre asegura que la camara este configurada en 4K 30 FPS antes de iniciar.
     """
     try:
-        # Asegurar control por cable USB activo
+        # Asegurar control por cable USB activo y modo 4K 30fps si va a iniciar
         requests.get(f"http://{ip}:8080/gopro/camera/control/wired_usb?p=1", timeout=2)
+        if iniciar:
+            configurar_gopro_video_4k30(ip)
+
         endpoint = "start" if iniciar else "stop"
         r = requests.get(f"http://{ip}:8080/gopro/camera/shutter/{endpoint}", timeout=3)
         if r.status_code != 200:
@@ -119,7 +142,7 @@ def activar_shutter_gopro(ip, iniciar=True):
             if r_st.status_code == 200:
                 st = r_st.json().get("status", {}).get("10")
                 if st == objetivo:
-                    return True, "Grabacion confirmada y activa en la camara (Sensor 10 = 1)" if iniciar else "Grabacion detenida correctamente (Sensor 10 = 0)"
+                    return True, "Grabacion confirmada y activa en la camara (Sensor 10 = 1, 4K 30FPS)" if iniciar else "Grabacion detenida correctamente (Sensor 10 = 0)"
 
         return False, "La orden se envio pero el sensor interno no confirmo el cambio de estado"
     except Exception as e:
@@ -147,6 +170,8 @@ def obtener_lista_medios_gopro(ip):
                 d = medio.get("d", "")
                 for f in medio.get("fs", []):
                     nombre = f.get("n", "")
+                    if nombre.lower().endswith(('.thm', '.lrv')):
+                        continue
                     archivos.append((d, nombre, int(f.get("cre", 0)), int(f.get("s", 0))))
             return archivos
     except Exception:
@@ -418,6 +443,14 @@ async def index():
                     <span class="status-label">Puerto Telemetria (915 MHz):</span>
                     <select id="sel-puerto" style="padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; width: 180px;">
                         <option value="AUTO">Deteccion Automatica</option>
+                    </select>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Fotos desde Video 4K:</span>
+                    <select id="sel-intervalo" style="padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; width: 180px;">
+                        <option value="1.0" selected>1 foto / seg (90% solape)</option>
+                        <option value="0.5">2 fotos / seg (Alta densidad)</option>
+                        <option value="2.0">1 foto cada 2 seg (Baja densidad)</option>
                     </select>
                 </div>
                 
@@ -697,7 +730,7 @@ async def index():
                 const barCont = document.getElementById("bar-container");
                 const bar = document.getElementById("prog-bar");
 
-                if (d.estado_proceso === "DESCARGANDO" || d.estado_proceso === "ETIQUETANDO") {
+                if (d.estado_proceso === "DESCARGANDO" || d.estado_proceso === "ETIQUETANDO" || d.estado_proceso === "PROCESANDO_VIDEO") {
                     msgProc.style.display = "block";
                     msgProc.className = "alert-box alert-warning";
                     msgProc.innerText = d.mensaje_proceso;
@@ -706,7 +739,12 @@ async def index():
                 } else if (d.estado_proceso === "COMPLETADO") {
                     msgProc.style.display = "block";
                     msgProc.className = "alert-box alert-success";
-                    msgProc.innerHTML = `${d.mensaje_proceso} <br><button class="btn-secondary" style="margin-top:8px; padding:6px 12px;" onclick="abrirCarpeta('${d.carpeta_mision.replace(/\\\\/g, '/')}')">Abrir Carpeta de Fotos</button>`;
+                    msgProc.innerHTML = `${d.mensaje_proceso} <br><button class="btn-secondary" style="margin-top:8px; padding:6px 12px;" onclick="abrirCarpeta('${d.carpeta_mision.replace(/\\\\/g, '/')}/fotos')">Abrir Carpeta de Fotos (DJI)</button>`;
+                    barCont.style.display = "none";
+                } else if (d.estado_proceso === "ERROR") {
+                    msgProc.style.display = "block";
+                    msgProc.className = "alert-box alert-warning";
+                    msgProc.innerText = d.mensaje_proceso;
                     barCont.style.display = "none";
                 }
 
@@ -783,12 +821,13 @@ async def index():
 
             const mision = document.getElementById("input-mision").value.trim() || "Mision_Vuelo";
             const puerto = document.getElementById("sel-puerto").value;
-            logMsg(`Iniciando mision: ${mision}...`);
+            const intervalo = parseFloat(document.getElementById("sel-intervalo").value) || 1.0;
+            logMsg(`Iniciando mision: ${mision} (Extraccion: ${intervalo} s/foto)...`);
 
             const r = await fetch("/api/flight/start", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mision: mision, puerto: puerto })
+                body: JSON.stringify({ mision: mision, puerto: puerto, intervalo: intervalo })
             });
             const d = await r.json();
             if (d.exito) {
@@ -839,7 +878,7 @@ def scan_all():
     gp_ok = False
     gp_batt = "--"
     gp_shutter = False
-    gp_grabando = False
+    gp_grabando = estado.gopro_grabando
     if gp_ip:
         try:
             r = requests.get(f"http://{gp_ip}:8080/gopro/version", timeout=1.2)
@@ -1024,6 +1063,7 @@ def start_flight(data: dict):
 
     nombre_mision = data.get("mision", "Vuelo").replace(" ", "_")
     puerto_sel = data.get("puerto", "AUTO")
+    estado.intervalo_fotos_seg = float(data.get("intervalo", 1.0))
 
     if puerto_sel == "AUTO":
         puerto_pix = buscar_puerto_pixhawk()
@@ -1094,19 +1134,33 @@ def start_flight(data: dict):
 def tarea_procesamiento_post_vuelo():
     global estado
     try:
+        # 1. Comprobar conexion con GoPro (reintentar unos segundos por si recién conectan el cable USB)
+        estado.estado_proceso = "DESCARGANDO"
+        estado.mensaje_proceso = "Comprobando conexion con GoPro..."
+        estado.progreso_porcentaje = 5
+
         ip = estado.gopro_ip or buscar_ip_gopro()
+        if not ip:
+            for seg in range(10):
+                estado.mensaje_proceso = f"Esperando conexion USB de la GoPro ({10 - seg} s)... Conecte el cable a la PC."
+                time.sleep(1.0)
+                ip = buscar_ip_gopro()
+                if ip:
+                    estado.gopro_ip = ip
+                    break
+
         if ip:
             activar_shutter_gopro(ip, iniciar=False)
             estado.gopro_grabando = False
-
-        estado.estado_proceso = "DESCARGANDO"
-        estado.mensaje_proceso = "Buscando fotografias y videos nuevos en la GoPro..."
-        estado.progreso_porcentaje = 10
+            time.sleep(1.5)  # Esperar que la GoPro finalice de escribir el archivo MP4
 
         if not ip:
             estado.estado_proceso = "ERROR"
-            estado.mensaje_proceso = "Conecte la GoPro por cable USB a la computadora para descargar los medios."
+            estado.mensaje_proceso = "GoPro no detectada por USB. Conecte el cable USB y vuelva a presionar Finalizar y Procesar."
             return
+
+        estado.mensaje_proceso = "Buscando videos 4K y fotos nuevas en la GoPro..."
+        estado.progreso_porcentaje = 10
 
         medios_actuales = obtener_lista_medios_gopro(ip)
         nuevos = []
@@ -1114,7 +1168,9 @@ def tarea_procesamiento_post_vuelo():
             if (d, n) not in estado.fotos_previas:
                 nuevos.append((d, n, size))
 
+        carpeta_video = os.path.join(estado.carpeta_mision, "video")
         carpeta_fotos = os.path.join(estado.carpeta_mision, "fotos")
+        os.makedirs(carpeta_video, exist_ok=True)
         os.makedirs(carpeta_fotos, exist_ok=True)
 
         total_descargas = len(nuevos)
@@ -1124,51 +1180,77 @@ def tarea_procesamiento_post_vuelo():
             estado.progreso_porcentaje = 100
             return
 
-        for idx, (d, n, size) in enumerate(nuevos, 1):
-            estado.mensaje_proceso = f"Descargando archivo {idx} de {total_descargas} ({n})..."
-            estado.progreso_porcentaje = int(10 + (idx / total_descargas) * 45)
-            
-            url_descarga = f"http://{ip}:8080/videos/DCIM/{d}/{n}"
-            destino = os.path.join(carpeta_fotos, n)
+        videos_descargados = []
+        fotos_directas_descargadas = []
 
-            with requests.get(url_descarga, stream=True, timeout=15) as r:
+        for idx, (d, n, size) in enumerate(nuevos, 1):
+            url_descarga = f"http://{ip}:8080/videos/DCIM/{d}/{n}"
+            es_video = n.lower().endswith((".mp4", ".mov"))
+            destino = os.path.join(carpeta_video if es_video else carpeta_fotos, n)
+
+            tamanio_mb = size / (1024 * 1024) if size > 0 else 0
+            estado.mensaje_proceso = f"Descargando archivo {idx} de {total_descargas} ({n} - {tamanio_mb:.1f} MB)..."
+            estado.progreso_porcentaje = int(10 + (idx / total_descargas) * 30)
+
+            with requests.get(url_descarga, stream=True, timeout=20) as r:
                 r.raise_for_status()
                 with open(destino, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
 
-        estado.estado_proceso = "ETIQUETANDO"
-        estado.mensaje_proceso = "Inyectando metadatos nativos DJI Mini 2 SE..."
-        estado.progreso_porcentaje = 60
+            if es_video:
+                videos_descargados.append(destino)
+            else:
+                fotos_directas_descargadas.append(destino)
 
         puntos = cargar_desde_csv(estado.ruta_csv)
         if not puntos:
-            estado.mensaje_proceso = "Descarga finalizada, pero no se hallaron coordenadas en el CSV de telemetria."
+            estado.mensaje_proceso = "Medios descargados, pero no se registraron puntos en telemetria.csv."
             estado.estado_proceso = "COMPLETADO"
+            estado.progreso_porcentaje = 100
             return
 
-        archivos_locales = [f for f in os.listdir(carpeta_fotos) if f.lower().endswith((".jpg", ".jpeg", ".dng", ".mp4", ".mov"))]
-        total_locales = len(archivos_locales)
-        exitos = 0
+        # 2. Extraccion de fotogramas del video 4K e inyeccion de metadatos DJI Mini 2 SE
+        total_fotos_generadas = 0
+        if videos_descargados:
+            estado.estado_proceso = "PROCESANDO_VIDEO"
+            for v_idx, ruta_vid in enumerate(videos_descargados, 1):
+                nombre_vid = os.path.basename(ruta_vid)
+                
+                def progreso_extraccion(pct, msg):
+                    estado.progreso_porcentaje = int(40 + (pct / 100.0) * 50)
+                    estado.mensaje_proceso = f"[Video {v_idx}/{len(videos_descargados)}: {nombre_vid}] {msg}"
 
-        for idx, nombre in enumerate(archivos_locales, 1):
-            estado.progreso_porcentaje = int(60 + (idx / total_locales) * 38)
-            ruta_completa = os.path.join(carpeta_fotos, nombre)
+                fotos_ext = dividir_video_en_imagenes_dji(
+                    ruta_video=ruta_vid,
+                    puntos=puntos,
+                    carpeta_salida=carpeta_fotos,
+                    intervalo_segundos=estado.intervalo_fotos_seg,
+                    callback_progreso=progreso_extraccion
+                )
+                total_fotos_generadas += len(fotos_ext)
 
-            if nombre.lower().endswith((".mp4", ".mov")):
-                generar_srt_dji(ruta_completa, puntos)
-                exitos += 1
-            else:
-                t_foto = obtener_timestamp_imagen(ruta_completa)
+        # 3. Si hubo fotos directas JPG, etiquetarlas tambien
+        if fotos_directas_descargadas:
+            estado.estado_proceso = "ETIQUETANDO"
+            estado.mensaje_proceso = "Inyectando metadatos DJI en fotos directas..."
+            metadatos_directas = []
+            for ruta_f in fotos_directas_descargadas:
+                t_foto = obtener_timestamp_imagen(ruta_f)
                 telem = interpolar_telemetria(puntos, t_foto)
                 if telem:
-                    ok = escribir_metadatos_dji(ruta_completa, telem)
-                    if ok: exitos += 1
+                    dt_utc_str = datetime.fromtimestamp(t_foto, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+                    metadatos_directas.append((ruta_f, telem, dt_utc_str))
+            etiquetadas = escribir_metadatos_dji_batch(metadatos_directas)
+            total_fotos_generadas += etiquetadas
 
         estado.progreso_porcentaje = 100
         estado.estado_proceso = "COMPLETADO"
-        estado.mensaje_proceso = f"Exito: {exitos} de {total_locales} archivos procesados con metadatos nativos DJI Mini 2 SE."
+        estado.mensaje_proceso = (
+            f"Exito: {len(videos_descargados)} video(s) 4K y {total_fotos_generadas} fotografias "
+            f"etiquetadas con metadatos nativos DJI Mini 2 SE (Nadir -90°, HyperSmooth)."
+        )
 
     except Exception as e:
         estado.estado_proceso = "ERROR"
