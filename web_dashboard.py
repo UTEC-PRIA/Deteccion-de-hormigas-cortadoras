@@ -722,14 +722,13 @@ def tarea_procesamiento_post_vuelo():
             ruta_completa = os.path.join(carpeta_fotos, nombre)
 
             if nombre.lower().endswith((".mp4", ".mov")):
-                generar_srt_dji(ruta_completa, puntos, montura="fijo_nadir")
+                generar_srt_dji(ruta_completa, puntos)
                 exitos += 1
             else:
                 t_foto = obtener_timestamp_imagen(ruta_completa)
                 telem = interpolar_telemetria(puntos, t_foto)
                 if telem:
-                    # Montura Fijo Nadir: GimbalRoll = DroneRoll, GimbalPitch = -90 + DronePitch
-                    ok = escribir_metadatos_dji(ruta_completa, telem, montura="fijo_nadir")
+                    ok = escribir_metadatos_dji(ruta_completa, telem)
                     if ok: exitos += 1
 
         estado.progreso_porcentaje = 100

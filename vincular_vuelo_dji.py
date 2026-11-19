@@ -3,7 +3,7 @@
 """
 Proyecto UAV UTEC-PRIA - Deteccion de Hormigas Cortadoras
 Modulo 3: Vinculador de Telemetria a Formato Nativo DJI Mini 2 SE (Post-Vuelo)
-Adaptado especificamente para cuadricoptero F450 con soporte fijo (sin gimbal).
+Configuracion: GoPro HERO13 Black orientada hacia abajo (Nadir -90.0° con estabilizacion HyperSmooth propia).
 Compatible con Windows y Ubuntu.
 """
 
@@ -213,35 +213,17 @@ def obtener_timestamp_imagen(ruta_img):
             pass
     return os.path.getmtime(ruta_img)
 
-def escribir_metadatos_dji(ruta_img, telem, montura="fijo_nadir"):
+def escribir_metadatos_dji(ruta_img, telem):
     """
     Inyecta metadatos EXIF y XMP en formato nativo DJI Mini 2 SE.
-    
-    IMPORTANTE - CUADRICOPTERO F450 SIN GIMBAL:
-    Al tratarse de una montura fija sin estabilizador motorizado, la camara
-    se inclina solidariamente con el fuselaje del dron:
-    - En montura fija nadir (hacia abajo):
-        * GimbalRollDegree = Alabeo del dron (telem.roll)
-        * GimbalPitchDegree = -90.0 + Cabeceo del dron (telem.pitch)
-        * GimbalYawDegree = Rumbo del dron (telem.yaw)
-    De este modo, el software de fotogrametria (WebODM, Pix4D) conoce la
-    inclinacion real del lente al momento exacto de la exposicion.
+    La GoPro HERO13 cuenta con estabilizacion de horizonte propia (HyperSmooth):
+    - GimbalRollDegree = 0.0 (Horizonte estabilizado por la camara)
+    - GimbalPitchDegree = -90.0 (Alineada perpendicular hacia el suelo - Nadir)
+    - GimbalYawDegree = Rumbo del dron
+    - La actitud fisica del dron se registra en FlightRollDegree, FlightPitchDegree y FlightYawDegree.
     """
     lat_ref = "N" if telem.lat >= 0 else "S"
     lon_ref = "E" if telem.lon >= 0 else "W"
-
-    if montura == "fijo_nadir":
-        g_roll = telem.roll
-        g_pitch = -90.0 + telem.pitch
-        g_yaw = telem.yaw
-    elif montura == "fijo_frontal":
-        g_roll = telem.roll
-        g_pitch = telem.pitch
-        g_yaw = telem.yaw
-    else:  # Gimbal estabilizado teorico
-        g_roll = 0.0
-        g_pitch = -90.0
-        g_yaw = telem.yaw
 
     cmd = [
         EXIFTOOL_CMD,
@@ -260,9 +242,9 @@ def escribir_metadatos_dji(ruta_img, telem, montura="fijo_nadir"):
         f"-XMP-drone-dji:FlightRollDegree={telem.roll:.1f}",
         f"-XMP-drone-dji:FlightPitchDegree={telem.pitch:.1f}",
         f"-XMP-drone-dji:FlightYawDegree={telem.yaw:.1f}",
-        f"-XMP-drone-dji:GimbalRollDegree={g_roll:.1f}",
-        f"-XMP-drone-dji:GimbalPitchDegree={g_pitch:.1f}",
-        f"-XMP-drone-dji:GimbalYawDegree={g_yaw:.1f}",
+        "-XMP-drone-dji:GimbalRollDegree=0.0",
+        "-XMP-drone-dji:GimbalPitchDegree=-90.0",
+        f"-XMP-drone-dji:GimbalYawDegree={telem.yaw:.1f}",
         f"-XMP-drone-dji:FlightXSpeed={telem.vx:.1f}",
         f"-XMP-drone-dji:FlightYSpeed={telem.vy:.1f}",
         f"-XMP-drone-dji:FlightZSpeed={telem.vz:.1f}",
@@ -273,7 +255,7 @@ def escribir_metadatos_dji(ruta_img, telem, montura="fijo_nadir"):
     res = subprocess.run(cmd, capture_output=True, text=True)
     return res.returncode == 0
 
-def generar_srt_dji(ruta_video, puntos, montura="fijo_nadir"):
+def generar_srt_dji(ruta_video, puntos):
     """Genera subtitulos de telemetria .SRT para video en formato DJI."""
     base, _ = os.path.splitext(ruta_video)
     ruta_srt = base + ".SRT"
@@ -297,18 +279,12 @@ def generar_srt_dji(ruta_video, puntos, montura="fijo_nadir"):
             ts_fin = str(timedelta(seconds=s+1))
             if len(ts_fin.split(":")) == 2: ts_fin = "00:" + ts_fin
             
-            # Ajuste de angulo de camara sin gimbal
-            if montura == "fijo_nadir":
-                g_pitch = -90.0 + telem.pitch
-            else:
-                g_pitch = telem.pitch
-
             bloque = (
                 f"{s + 1}\n"
                 f"{ts_ini},000 --> {ts_fin},000\n"
                 f"[latitude: {telem.lat:.6f}] [longitude: {telem.lon:.6f}] "
                 f"[rel_alt: {telem.rel_alt:.3f} abs_alt: {telem.alt_msl:.3f}] "
-                f"[flight_yaw: {telem.yaw:.1f}] [gimbal_pitch: {g_pitch:.1f}] [iso: 100] [shutter: 1/240]\n\n"
+                f"[flight_yaw: {telem.yaw:.1f}] [iso: 100] [shutter: 1/240]\n\n"
             )
             f.write(bloque)
     print(f"[+] Archivo de subtitulos generado: {ruta_srt}")
@@ -317,14 +293,13 @@ def generar_srt_dji(ruta_video, puntos, montura="fijo_nadir"):
 def main():
     print("=================================================================")
     print("   VINCULADOR DE TELEMETRIA A FORMATO NATIVO DJI MINI 2 SE")
-    print("   Plataforma: Cuadricoptero F450 (Soporte Fijo sin Gimbal)")
+    print("   Configuracion: GoPro HERO13 Nadir (-90.0° hacia abajo)")
     print("   Proyecto UAV Hormigas Cortadoras - UTEC PRIA")
     print("=================================================================")
 
-    parser = argparse.ArgumentParser(description="Etiquetador de fotos/videos a formato DJI Mini 2 SE para F450 sin gimbal")
+    parser = argparse.ArgumentParser(description="Etiquetador de fotos/videos a formato DJI Mini 2 SE")
     parser.add_argument("--log", help="Ruta al archivo .CSV, .BIN o .tlog de telemetria")
     parser.add_argument("--media", help="Carpeta con fotos o archivo de video MP4")
-    parser.add_argument("--mount", choices=["fijo_nadir", "fijo_frontal", "gimbal_estabilizado"], default="fijo_nadir", help="Tipo de montura (por defecto: fijo_nadir)")
     parser.add_argument("--offset", type=float, default=0.0, help="Ajuste manual de segundos si es necesario")
     args = parser.parse_args()
 
@@ -357,14 +332,12 @@ def main():
         if sys.stdin.isatty(): input("\nPresione ENTER para salir...")
         return 1
 
-    # Si es video
     if os.path.isfile(media_path) and media_path.lower().endswith((".mp4", ".mov")):
-        generar_srt_dji(media_path, puntos, montura=args.mount)
+        generar_srt_dji(media_path, puntos)
         print("\n[+] Proceso completado exitosamente.")
         if sys.stdin.isatty(): input("\nPresione ENTER para finalizar...")
         return 0
 
-    # Si es carpeta de fotos
     if os.path.isdir(media_path):
         archivos = [f for f in os.listdir(media_path) if f.lower().endswith((".jpg", ".jpeg", ".dng"))]
         archivos.sort()
@@ -374,7 +347,7 @@ def main():
             if sys.stdin.isatty(): input("\nPresione ENTER para salir...")
             return 1
 
-        print(f"\n[*] Procesando {len(archivos)} fotografias (Montura: {args.mount})...")
+        print(f"\n[*] Procesando {len(archivos)} fotografias...")
         exitos = 0
         for i, nombre in enumerate(archivos, 1):
             ruta_foto = os.path.join(media_path, nombre)
@@ -382,10 +355,10 @@ def main():
             telem = interpolar_telemetria(puntos, t_foto)
 
             if telem:
-                ok = escribir_metadatos_dji(ruta_foto, telem, montura=args.mount)
+                ok = escribir_metadatos_dji(ruta_foto, telem)
                 if ok:
                     exitos += 1
-                    print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m, Roll: {telem.roll:.1f}°, Pitch: {(-90.0 + telem.pitch):.1f}° [DJI OK]")
+                    print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m, Pitch: -90.0° [DJI OK]")
                 else:
                     print(f"  [{i}/{len(archivos)}] {nombre} -> Error al escribir metadatos con ExifTool.")
             else:
@@ -393,7 +366,6 @@ def main():
 
         print("\n=================================================================")
         print(f"   RESUMEN: {exitos} de {len(archivos)} fotografias etiquetadas.")
-        print(f"   Compensacion de angulo sin gimbal: ACTIVA (Alabeo y cabeceo transferidos a la camara).")
         print("   Formato: NATIVO DJI MINI 2 SE (EXIF + XMP drone-dji)")
         print("   Compatible directamente con: WebODM, Pix4D, Agisoft, QGIS, DJI Terra")
         print("=================================================================")
