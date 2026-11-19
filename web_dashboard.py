@@ -551,9 +551,15 @@ async def index():
                     const recTxt = d.gopro.grabando ? "GRABANDO ACTIVA" : "En Espera (Listo)";
                     gSub.innerText = `IP: ${d.gopro.ip} | ${recTxt}`;
                 } else {
-                    gVal.innerText = "Desconectada";
-                    gVal.className = "scan-item-val val-warn";
-                    gSub.innerText = "Conecte por USB para control automatico";
+                    if (d.gopro.grabando) {
+                        gVal.innerText = "Grabando en Vuelo";
+                        gVal.className = "scan-item-val val-ok";
+                        gSub.innerText = "Autonoma en SD con bateria interna";
+                    } else {
+                        gVal.innerText = "Desconectada";
+                        gVal.className = "scan-item-val val-warn";
+                        gSub.innerText = "Modo autonomo (o conecte USB)";
+                    }
                 }
 
                 // Resumen Global
@@ -602,11 +608,16 @@ async def index():
                         elGpRec.className = "badge-cam-idle";
                     }
                 } else {
-                    elGpStatus.innerText = "Desconectada (Modo Manual)";
+                    elGpStatus.innerText = "Desconectada (Modo Vuelo)";
                     elGpStatus.className = "status-value val-warn";
                     elGpBatt.innerText = "--";
-                    elGpRec.innerText = "MODO MANUAL";
-                    elGpRec.className = "badge-cam-idle";
+                    if (d.gopro_grabando) {
+                        elGpRec.innerText = "GRABANDO EN VUELO (Autonoma)";
+                        elGpRec.className = "badge-cam-rec";
+                    } else {
+                        elGpRec.innerText = "EN ESPERA (Desconectada)";
+                        elGpRec.className = "badge-cam-idle";
+                    }
                 }
 
                 // Pixhawk / Radio
@@ -819,7 +830,7 @@ async def index():
     return HTMLResponse(content=html)
 
 @app.get("/api/scan_all")
-async def scan_all():
+def scan_all():
     """Realiza un autoescaneo activo enviando pruebas reales a la radio y GoPro."""
     global estado
     
@@ -910,7 +921,7 @@ async def scan_all():
     }
 
 @app.post("/api/gopro/shutter/start")
-async def gopro_shutter_start():
+def gopro_shutter_start():
     ip = estado.gopro_ip or buscar_ip_gopro()
     if not ip:
         return {"exito": False, "error": "GoPro no conectada por USB"}
@@ -919,7 +930,7 @@ async def gopro_shutter_start():
     return {"exito": ok, "mensaje": msg}
 
 @app.post("/api/gopro/shutter/stop")
-async def gopro_shutter_stop():
+def gopro_shutter_stop():
     ip = estado.gopro_ip or buscar_ip_gopro()
     if not ip:
         return {"exito": False, "error": "GoPro no conectada por USB"}
@@ -929,14 +940,19 @@ async def gopro_shutter_stop():
     return {"exito": ok, "mensaje": msg}
 
 @app.get("/api/status")
-async def get_status():
+def get_status():
     global estado
     
-    if not estado.gopro_ip:
-        estado.gopro_ip = buscar_ip_gopro()
-    if estado.gopro_ip:
-        estado.gopro_bateria = consultar_estado_gopro(estado.gopro_ip)
-        estado.gopro_grabando = consultar_grabacion_gopro(estado.gopro_ip)
+    ip_gp = buscar_ip_gopro()
+    estado.gopro_ip = ip_gp
+    if ip_gp:
+        estado.gopro_bateria = consultar_estado_gopro(ip_gp)
+        estado.gopro_grabando = consultar_grabacion_gopro(ip_gp)
+    else:
+        # Camara desconectada del cable USB (modo vuelo en el dron).
+        # Mantenemos estado.gopro_grabando = True si ya habia sido iniciada,
+        # porque la GoPro continua grabando en la tarjeta SD de forma autonoma con su bateria interna.
+        pass
 
     puertos_raw = list(serial.tools.list_ports.comports())
     puertos = [{"dev": p.device, "desc": f"{p.device} ({p.description})"} for p in puertos_raw if "bluetooth" not in (p.description or "").lower()]
@@ -969,7 +985,7 @@ async def get_status():
     }
 
 @app.post("/api/sync_clocks")
-async def sync_clocks():
+def sync_clocks():
     global estado
     gopro_ip = estado.gopro_ip or buscar_ip_gopro()
     if not gopro_ip:
@@ -1001,7 +1017,7 @@ async def sync_clocks():
     return {"exito": False, "error": "Fallo al escribir la hora en la GoPro"}
 
 @app.post("/api/flight/start")
-async def start_flight(data: dict):
+def start_flight(data: dict):
     global estado
     if estado.en_grabacion:
         return {"exito": False, "error": "Ya hay una grabacion en curso."}
@@ -1060,6 +1076,9 @@ async def start_flight(data: dict):
         gopro_iniciada = ok
         gopro_msg = msg
         estado.gopro_grabando = ok
+    elif estado.gopro_grabando:
+        gopro_iniciada = True
+        gopro_msg = "Grabacion activa en curso (iniciada previamente por cable, continuando en tarjeta SD)"
 
     estado.hilo_telemetria = threading.Thread(target=bucle_telemetria, daemon=True)
     estado.hilo_telemetria.start()
@@ -1156,7 +1175,7 @@ def tarea_procesamiento_post_vuelo():
         estado.mensaje_proceso = f"Error durante el procesamiento: {e}"
 
 @app.post("/api/flight/stop_and_process")
-async def stop_flight(background_tasks: BackgroundTasks):
+def stop_flight(background_tasks: BackgroundTasks):
     global estado
     if not estado.en_grabacion:
         return {"exito": False, "error": "No hay ningun vuelo en grabacion actualmente."}
@@ -1180,7 +1199,7 @@ async def stop_flight(background_tasks: BackgroundTasks):
     return {"exito": True, "mensaje": "Grabacion detenida. Iniciando descarga USB y etiquetado DJI..."}
 
 @app.get("/api/open_folder")
-async def open_folder(ruta: str):
+def open_folder(ruta: str):
     if os.path.exists(ruta):
         if sys.platform.startswith('win'):
             os.startfile(ruta)

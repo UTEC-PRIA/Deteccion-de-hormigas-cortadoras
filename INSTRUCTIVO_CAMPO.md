@@ -48,9 +48,14 @@ Ejecute en la terminal:
 
 ### 3.2. Durante el Vuelo
 1. Enrosque la antena al receptor USB de 915 MHz y conectelo a la computadora.
-2. En la pagina web, escriba el nombre de la mision (ej. `Vuelo_Lote_1`) y haga clic en **[Comenzar Grabacion]**.
-3. Vera el indicador cambiar a rojo: `GRABANDO EN VIVO` y vera los numeros de altura, satelites y bateria actualizandose segundo a segundo.
-4. Inicie la grabacion o toma de fotos en la GoPro y realice el vuelo del dron.
+2. En la pagina web, escriba el nombre de la mision (ej. `Vuelo_Lote_1`).
+3. **Inicio y Desconexion de la GoPro:**
+   * La GoPro HERO13 cuenta con bateria interna propia (Enduro).
+   * Puede presionar **[Grabar Camara]** desde el dashboard para confirmar el encendido por software antes de desconectarla, o presionar el boton superior del obturador fisico de la GoPro una vez montada.
+   * **Al desconectar el cable USB, la camara continuara grabando de forma ininterrumpida y autonoma en su tarjeta SD interna.** El dashboard mantendra el indicador visual `GRABANDO EN VUELO (Autonoma)`.
+4. Haga clic en **[Comenzar Grabacion]** en el dashboard.
+5. Vera el indicador cambiar a rojo: `GRABANDO EN VIVO` y vera los numeros de altura, satelites y bateria 3S actualizandose segundo a segundo.
+6. Realice el vuelo del dron sobre el lote de estudio.
 
 ### 3.3. Al Aterrizar (Descarga y Procesamiento Automatico)
 1. Conecte nuevamente el cable USB-C de la GoPro a la computadora.

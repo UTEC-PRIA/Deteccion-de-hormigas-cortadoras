@@ -17,24 +17,30 @@ import psutil
 from pymavlink import mavutil
 
 def buscar_ip_gopro():
-    """Busca la direccion IP de la GoPro a traves de los adaptadores de red USB."""
+    """Busca la direccion IP de la GoPro a traves de los adaptadores de red USB de forma instantanea."""
     candidatas = []
-    # Revisar las interfaces de red del sistema
+    tiene_interfaz_gopro = False
     for _, addrs in psutil.net_if_addrs().items():
         for a in addrs:
-            if a.family == socket.AF_INET and a.address.startswith("172."):
-                octetos = a.address.split(".")
-                candidatas.append(f"{octetos[0]}.{octetos[1]}.{octetos[2]}.51")
+            if a.family == socket.AF_INET:
+                if a.address.startswith("172."):
+                    tiene_interfaz_gopro = True
+                    octetos = a.address.split(".")
+                    candidatas.append(f"{octetos[0]}.{octetos[1]}.{octetos[2]}.51")
+                elif a.address.startswith("10.5.5."):
+                    tiene_interfaz_gopro = True
+                    candidatas.append("10.5.5.9")
 
-    # Direcciones estandar por defecto
-    candidatas.extend(["172.21.167.51", "172.20.180.51", "172.22.180.51", "10.5.5.9"])
-    
+    # Si no existe ninguna interfaz de red USB de la GoPro activa en el sistema, retornar de inmediato
+    if not tiene_interfaz_gopro:
+        return None
+
     vistas = set()
     unicas = [x for x in candidatas if not (x in vistas or vistas.add(x))]
 
     for ip in unicas:
         try:
-            r = requests.get(f"http://{ip}:8080/gopro/version", timeout=0.8)
+            r = requests.get(f"http://{ip}:8080/gopro/version", timeout=0.35)
             if r.status_code == 200:
                 return ip
         except Exception:

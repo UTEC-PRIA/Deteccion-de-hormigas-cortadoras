@@ -65,12 +65,13 @@ El programa abrira automaticamente su navegador en:
 2. Conecte la GoPro por cable USB a la computadora y la antena receptora de 915 MHz en otro puerto USB.
 3. En la pagina web (`http://localhost:8000`), el sistema realizara el **Autoescaneo** mostrando el estado de la radio, bateria 3S y camara.
 4. Presione **[Sincronizar Relojes]** para calibrar la hora interna de la camara (< 0.05 s de diferencia) y registrar fotos previas.
-5. Puede probar el disparo con los botones **[Grabar Camara]** y **[Detener Camara]** verificando el indicador en pantalla.
-6. Desconecte la GoPro y montela en el soporte inferior del dron mirando hacia abajo (Nadir).
+5. Puede iniciar el disparo con el boton **[Grabar Camara]** verificando el indicador en pantalla antes de desconectar el cable, o presionar el obturador fisico superior de la camara una vez montada en el dron.
+6. **Desconexion para vuelo:** Al desconectar el cable USB, la GoPro HERO13 cuenta con bateria interna propia y continuara grabando ininterrumpidamente en su tarjeta SD. El dashboard mantendra el estado `GRABANDO EN VUELO (Autonoma)`.
+7. Monte la GoPro en el soporte inferior del dron orientada perpendicularmente hacia el suelo (Nadir).
 
 ### Paso 2: Durante el Vuelo (Radio de 915 MHz)
 1. En la pagina web, haga clic en el boton verde **[Comenzar Grabacion]**.  
-   El sistema verifica la telemetria y activa la grabacion de la camara si esta conectada por cable. Si vuela en modo autonomo, encienda la grabacion manualmente antes de despegar.
+   El sistema confirma la telemetria MAVLink activa a traves de la radio de 915 MHz.
 2. Vera en vivo: altura relativa sobre el suelo, modo de vuelo, voltaje y porcentaje de bateria 3S, satelites GPS y rumbo.
 
 ### Paso 3: Al Aterrizar (Descarga y Procesamiento)
