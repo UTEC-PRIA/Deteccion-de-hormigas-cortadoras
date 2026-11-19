@@ -9,3 +9,7 @@ aiofiles
 websockets
 MAVProxy
 future
+pyserial
+psutil
+requests
+reportlab
