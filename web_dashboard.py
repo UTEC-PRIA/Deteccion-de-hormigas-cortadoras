@@ -3,6 +3,7 @@
 """
 Proyecto UAV UTEC-PRIA - Deteccion de Hormigas Cortadoras
 Dashboard Web de Telemetria en Tiempo Real y Procesamiento Automatico
+Plataforma: Cuadricoptero F450 con soporte fijo inferior (GoPro mirando hacia abajo, sin gimbal).
 Compatible con Windows y Ubuntu.
 """
 
@@ -25,7 +26,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import webbrowser
 
-# Importar funciones de los modulos existentes
 from sincronizar_relojes import buscar_ip_gopro, buscar_puerto_pixhawk, leer_tiempo_gps_pixhawk, fijar_hora_gopro, consultar_estado_gopro
 from vincular_vuelo_dji import (
     PuntoTelemetria, cargar_desde_csv, interpolar_telemetria,
@@ -35,7 +35,6 @@ from vincular_vuelo_dji import (
 
 app = FastAPI(title="UTEC PRIA - UAV Telemetry Dashboard")
 
-# Estado global del sistema
 class EstadoMision:
     def __init__(self):
         self.en_grabacion = False
@@ -69,7 +68,7 @@ class EstadoMision:
         self.tiempo_inicio_vuelo = None
         
         # Procesamiento
-        self.estado_proceso = "INACTIVO" # INACTIVO, GRABANDO, DESCARGANDO, ETIQUETANDO, COMPLETADO, ERROR
+        self.estado_proceso = "INACTIVO"
         self.mensaje_proceso = "Listo para iniciar"
         self.progreso_porcentaje = 0
         self.archivos_procesados = []
@@ -83,7 +82,6 @@ MODOS_ARDUPILOT = {
 }
 
 def obtener_lista_medios_gopro(ip):
-    """Obtiene la lista actual de archivos presentes en la tarjeta SD de la GoPro."""
     try:
         r = requests.get(f"http://{ip}:8080/gopro/media/list", timeout=3)
         if r.status_code == 200:
@@ -100,7 +98,6 @@ def obtener_lista_medios_gopro(ip):
     return []
 
 def bucle_telemetria():
-    """Hilo en segundo plano que recolecta paquetes MAVLink a alta frecuencia."""
     global estado
     while estado.en_grabacion:
         try:
@@ -113,7 +110,6 @@ def bucle_telemetria():
                 time.sleep(0.01)
                 continue
 
-            # Escribir en tlog binario
             if estado.archivo_tlog:
                 try:
                     estado.archivo_tlog.write(msg.get_msgbuf())
@@ -152,7 +148,6 @@ def bucle_telemetria():
             elif mtype == 'SYS_STATUS':
                 estado.bateria_dron = msg.voltage_battery / 1000.0
 
-            # Guardar en CSV cada 250 ms (4 lecturas/segundo)
             ahora = time.time()
             if ahora - estado.ultimo_registro_tiempo >= 0.25 and estado.lat != 0.0 and estado.archivo_csv:
                 t_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -167,12 +162,11 @@ def bucle_telemetria():
                 estado.ultimo_registro_tiempo = ahora
                 estado.total_registros += 1
 
-        except Exception as e:
+        except Exception:
             time.sleep(0.05)
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Genera la interfaz web completa en una sola pagina interactiva."""
     html = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -199,7 +193,6 @@ async def index():
         body { background-color: var(--bg); color: var(--text); padding: 20px; }
         .container { max-width: 1100px; margin: 0 auto; }
         
-        /* Encabezado */
         header { background: var(--primary); color: white; padding: 20px 28px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.5px; }
         header p { font-size: 0.85rem; color: #94A3B8; margin-top: 4px; }
@@ -207,14 +200,12 @@ async def index():
         .badge-recording { background: #DC2626; color: white; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
 
-        /* Grid */
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
         @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
         
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 22px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.05rem; color: var(--primary); margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
         
-        /* Listas de estado */
         .status-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #F1F5F9; font-size: 0.9rem; }
         .status-label { color: var(--text-muted); }
         .status-value { font-weight: 600; }
@@ -222,7 +213,6 @@ async def index():
         .val-warn { color: var(--warning); }
         .val-bad { color: var(--danger); }
 
-        /* Metricas de telemetria en vivo */
         .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 15px 0; }
         @media (max-width: 600px) { .metrics-grid { grid-template-columns: repeat(2, 1fr); } }
         .metric-box { background: #F1F5F9; padding: 12px; border-radius: 6px; text-align: center; }
@@ -230,7 +220,6 @@ async def index():
         .metric-val { font-size: 1.35rem; font-weight: 700; color: var(--primary); }
         .metric-sub { font-size: 0.75rem; color: var(--text-muted); }
 
-        /* Botones */
         .btn-group { display: flex; gap: 12px; margin-top: 15px; }
         button { flex: 1; padding: 12px 18px; border-radius: 6px; border: none; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
         .btn-primary { background: var(--primary); color: white; }
@@ -243,14 +232,12 @@ async def index():
         .btn-secondary:hover { background: #CBD5E1; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* Barra de progreso y mensajes */
         .alert-box { padding: 12px 16px; border-radius: 6px; margin-top: 15px; font-size: 0.88rem; display: none; }
         .alert-success { background: var(--success-bg); color: var(--success); border: 1px solid #BBF7D0; }
         .alert-warning { background: var(--warning-bg); color: var(--warning); border: 1px solid #FDE68A; }
         .progress-bar-container { width: 100%; height: 8px; background: #E2E8F0; border-radius: 4px; overflow: hidden; margin-top: 10px; display: none; }
         .progress-bar { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s; }
 
-        /* Log de eventos */
         .console-log { background: #0F172A; color: #38BDF8; font-family: monospace; font-size: 0.78rem; padding: 12px; border-radius: 6px; height: 110px; overflow-y: auto; margin-top: 15px; }
     </style>
 </head>
@@ -259,7 +246,7 @@ async def index():
         <header>
             <div>
                 <h1>UTEC PRIA | Centro de Control y Telemetria UAV</h1>
-                <p>Plataforma F450 (Pixhawk 2.4.8) + GoPro HERO13 Black | Formato DJI Mini 2 SE</p>
+                <p>Cuadricoptero F450 (Sin Gimbal - Camara fija hacia abajo) + GoPro HERO13 Black | Formato DJI Mini 2 SE</p>
             </div>
             <div>
                 <span id="badge-estado" class="badge-status">Inactivo</span>
@@ -285,6 +272,10 @@ async def index():
                 <div class="status-row">
                     <span class="status-label">Satélites GPS Pixhawk:</span>
                     <span id="txt-pix-sats" class="status-value">--</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Montura de Camara:</span>
+                    <span class="status-value val-ok">Soporte Fijo Inferior (Hacia Abajo - Nadir)</span>
                 </div>
                 
                 <div class="btn-group">
@@ -359,6 +350,10 @@ async def index():
                 <span class="status-label">Rumbo (Yaw) y Velocidad:</span>
                 <span id="met-rumbo-vel" class="status-value">Rumbo: 0.0° | Vel: 0.0 m/s</span>
             </div>
+            <div class="status-row">
+                <span class="status-label">Angulo Optico Camara (Compensacion F450):</span>
+                <span id="met-angulos" class="status-value">Roll: 0.0° | Pitch: -90.0° (Nadir)</span>
+            </div>
 
             <div class="console-log" id="log-terminal">
                 [SISTEMA] Dashboard iniciado. Conecte los equipos y verifique el estado.
@@ -405,7 +400,7 @@ async def index():
                     elPixSats.innerText = "--";
                 }
 
-                // Actualizar puertos disponibles
+                // Puertos
                 const sel = document.getElementById("sel-puerto");
                 if (d.puertos_disponibles && d.puertos_disponibles.length > 0) {
                     const actual = sel.value;
@@ -417,7 +412,7 @@ async def index():
                     sel.value = actual;
                 }
 
-                // Estado de grabacion
+                // Grabacion
                 const badge = document.getElementById("badge-estado");
                 const btnIni = document.getElementById("btn-iniciar");
                 const btnFin = document.getElementById("btn-finalizar");
@@ -434,7 +429,7 @@ async def index():
                     btnFin.disabled = true;
                 }
 
-                // Metricas en vivo
+                // Metricas
                 document.getElementById("met-alt-rel").innerText = `${d.alt_rel.toFixed(1)} m`;
                 document.getElementById("met-modo").innerText = d.modo_vuelo;
                 document.getElementById("met-bat").innerText = `${d.bateria_dron.toFixed(1)} V`;
@@ -442,8 +437,9 @@ async def index():
                 document.getElementById("met-coords").innerText = `Lat: ${d.lat.toFixed(6)} | Lon: ${d.lon.toFixed(6)}`;
                 document.getElementById("met-alt-msl").innerText = `${d.alt_msl.toFixed(1)} m`;
                 document.getElementById("met-rumbo-vel").innerText = `Rumbo: ${d.yaw.toFixed(1)}° | Vel: ${d.velocidad.toFixed(1)} m/s`;
+                document.getElementById("met-angulos").innerText = `Roll: ${d.roll.toFixed(1)}° | Pitch: ${(-90.0 + d.pitch).toFixed(1)}° (Nadir F450)`;
 
-                // Notificacion de proceso
+                // Progreso
                 const msgProc = document.getElementById("msg-proceso");
                 const barCont = document.getElementById("bar-container");
                 const bar = document.getElementById("prog-bar");
@@ -513,7 +509,7 @@ async def index():
         }
 
         async function finalizarYProcesar() {
-            if (!confirm("¿Desea finalizar la grabacion del vuelo actual y procesar las imagenes?")) return;
+            if (!confirm("¿Desea finalizar la grabacion del vuelo actual y descargar/procesar las fotos de la GoPro?")) return;
             logMsg("Deteniendo telemetria y comenzando transferencia de fotos desde GoPro...");
             
             const r = await fetch("/api/flight/stop_and_process", { method: "POST" });
@@ -526,7 +522,6 @@ async def index():
             await fetch(`/api/open_folder?ruta=${encodeURIComponent(ruta)}`);
         }
 
-        // Refresco periodico cada 800 ms
         setInterval(actualizarHardware, 800);
         actualizarHardware();
     </script>
@@ -536,10 +531,8 @@ async def index():
 
 @app.get("/api/status")
 async def get_status():
-    """Retorna el estado general de hardware y telemetria en tiempo real."""
     global estado
     
-    # Revisar GoPro si no esta activa
     if not estado.gopro_ip:
         estado.gopro_ip = buscar_ip_gopro()
     if estado.gopro_ip and estado.gopro_bateria == "N/D":
@@ -547,7 +540,6 @@ async def get_status():
 
     puertos_raw = list(serial.tools.list_ports.comports())
     puertos = [{"dev": p.device, "desc": f"{p.device} ({p.description})"} for p in puertos_raw if "bluetooth" not in (p.description or "").lower()]
-
     pix_puerto = buscar_puerto_pixhawk()
 
     return {
@@ -561,6 +553,8 @@ async def get_status():
         "lon": estado.lon,
         "alt_msl": estado.alt_msl,
         "alt_rel": estado.alt_rel,
+        "roll": estado.roll,
+        "pitch": estado.pitch,
         "yaw": estado.yaw,
         "velocidad": estado.velocidad,
         "bateria_dron": estado.bateria_dron,
@@ -575,15 +569,12 @@ async def get_status():
 
 @app.post("/api/sync_clocks")
 async def sync_clocks():
-    """Sincroniza los relojes de Pixhawk / PC y GoPro por cable USB."""
     global estado
     gopro_ip = buscar_ip_gopro()
     if not gopro_ip:
         return {"exito": False, "error": "No se detecto la GoPro. Verifique conexion USB y modo 'GoPro Connect'."}
     
     estado.gopro_ip = gopro_ip
-    
-    # Obtener fotos previas para no descargarlas dos veces despues
     archivos_previos = obtener_lista_medios_gopro(gopro_ip)
     estado.fotos_previas = set((d, n) for d, n, _, _ in archivos_previos)
 
@@ -614,7 +605,6 @@ async def sync_clocks():
 
 @app.post("/api/flight/start")
 async def start_flight(data: dict):
-    """Inicia la conexion de telemetria y la grabacion continua en CSV y TLOG."""
     global estado
     if estado.en_grabacion:
         return {"exito": False, "error": "Ya hay una grabacion en curso."}
@@ -622,13 +612,9 @@ async def start_flight(data: dict):
     nombre_mision = data.get("mision", "Vuelo").replace(" ", "_")
     puerto_sel = data.get("puerto", "AUTO")
 
-    # Resolver puerto real
     if puerto_sel == "AUTO":
         puerto_pix = buscar_puerto_pixhawk()
-        if puerto_pix:
-            puerto_real = puerto_pix
-        else:
-            puerto_real = "udpin:127.0.0.1:14550"
+        puerto_real = puerto_pix if puerto_pix else "udpin:127.0.0.1:14550"
     else:
         puerto_real = puerto_sel
 
@@ -647,7 +633,6 @@ async def start_flight(data: dict):
     except Exception as e:
         return {"exito": False, "error": f"No se pudo conectar a {puerto_real}: {e}"}
 
-    # Solicitar flujos de telemetria
     try:
         conn.mav.request_data_stream_send(
             conn.target_system, conn.target_component,
@@ -669,14 +654,12 @@ async def start_flight(data: dict):
     estado.en_grabacion = True
     estado.estado_proceso = "GRABANDO EN VIVO"
 
-    # Iniciar hilo de captura
     estado.hilo_telemetria = threading.Thread(target=bucle_telemetria, daemon=True)
     estado.hilo_telemetria.start()
 
     return {"exito": True, "puerto": puerto_real, "carpeta": carpeta}
 
 def tarea_procesamiento_post_vuelo():
-    """Descarga medios nuevos de la GoPro por USB e inyecta metadatos DJI Mini 2 SE."""
     global estado
     try:
         estado.estado_proceso = "DESCARGANDO"
@@ -690,7 +673,6 @@ def tarea_procesamiento_post_vuelo():
             return
 
         medios_actuales = obtener_lista_medios_gopro(ip)
-        # Filtrar solo archivos nuevos que no estaban antes del vuelo
         nuevos = []
         for d, n, cre, size in medios_actuales:
             if (d, n) not in estado.fotos_previas:
@@ -706,7 +688,6 @@ def tarea_procesamiento_post_vuelo():
             estado.progreso_porcentaje = 100
             return
 
-        # Descargar archivos a traves de la interfaz de red USB
         for idx, (d, n, size) in enumerate(nuevos, 1):
             estado.mensaje_proceso = f"Descargando archivo {idx} de {total_descargas} ({n})..."
             estado.progreso_porcentaje = int(10 + (idx / total_descargas) * 45)
@@ -721,12 +702,11 @@ def tarea_procesamiento_post_vuelo():
                         if chunk:
                             f.write(chunk)
 
-        # Fase de etiquetado a formato DJI Mini 2 SE
+        # Fase de etiquetado a formato DJI Mini 2 SE con montura fijo_nadir (F450 sin gimbal)
         estado.estado_proceso = "ETIQUETANDO"
-        estado.mensaje_proceso = "Inyectando metadatos nativos DJI Mini 2 SE con ExifTool..."
+        estado.mensaje_proceso = "Inyectando metadatos DJI Mini 2 SE con compensacion F450 sin gimbal..."
         estado.progreso_porcentaje = 60
 
-        # Cargar telemetria registrada
         puntos = cargar_desde_csv(estado.ruta_csv)
         if not puntos:
             estado.mensaje_proceso = "Descarga finalizada, pero no se hallaron coordenadas en el CSV de telemetria."
@@ -742,18 +722,19 @@ def tarea_procesamiento_post_vuelo():
             ruta_completa = os.path.join(carpeta_fotos, nombre)
 
             if nombre.lower().endswith((".mp4", ".mov")):
-                generar_srt_dji(ruta_completa, puntos)
+                generar_srt_dji(ruta_completa, puntos, montura="fijo_nadir")
                 exitos += 1
             else:
                 t_foto = obtener_timestamp_imagen(ruta_completa)
                 telem = interpolar_telemetria(puntos, t_foto)
                 if telem:
-                    ok = escribir_metadatos_dji(ruta_completa, telem, pitch_camara=-90.0)
+                    # Montura Fijo Nadir: GimbalRoll = DroneRoll, GimbalPitch = -90 + DronePitch
+                    ok = escribir_metadatos_dji(ruta_completa, telem, montura="fijo_nadir")
                     if ok: exitos += 1
 
         estado.progreso_porcentaje = 100
         estado.estado_proceso = "COMPLETADO"
-        estado.mensaje_proceso = f"Exito: {exitos} de {total_locales} archivos procesados con metadatos nativos DJI Mini 2 SE."
+        estado.mensaje_proceso = f"Exito: {exitos} de {total_locales} archivos procesados con metadatos nativos DJI Mini 2 SE (Montura F450 Nadir sin gimbal)."
 
     except Exception as e:
         estado.estado_proceso = "ERROR"
@@ -761,14 +742,12 @@ def tarea_procesamiento_post_vuelo():
 
 @app.post("/api/flight/stop_and_process")
 async def stop_flight(background_tasks: BackgroundTasks):
-    """Detiene la grabacion de telemetria y arranca la descarga y etiquetado automatico."""
     global estado
     if not estado.en_grabacion:
         return {"exito": False, "error": "No hay ningun vuelo en grabacion actualmente."}
 
     estado.en_grabacion = False
     
-    # Cerrar archivos
     if estado.archivo_csv:
         estado.archivo_csv.close()
         estado.archivo_csv = None
@@ -782,14 +761,11 @@ async def stop_flight(background_tasks: BackgroundTasks):
             pass
         estado.conexion_mavlink = None
 
-    # Iniciar procesamiento en background
     background_tasks.add_task(tarea_procesamiento_post_vuelo)
-
-    return {"exito": True, "mensaje": "Grabacion detenida. Iniciando descarga y etiquetado automatico..."}
+    return {"exito": True, "mensaje": "Grabacion detenida. Iniciando descarga USB y etiquetado DJI..."}
 
 @app.get("/api/open_folder")
 async def open_folder(ruta: str):
-    """Abre la carpeta de la mision en el explorador de archivos nativo."""
     if os.path.exists(ruta):
         if sys.platform.startswith('win'):
             os.startfile(ruta)
@@ -803,9 +779,9 @@ async def open_folder(ruta: str):
 def iniciar_servidor():
     print("=================================================================")
     print("   INICIANDO DASHBOARD WEB UAV UTEC-PRIA")
+    print("   Plataforma F450 (Sin Gimbal - Camara fija mirando hacia abajo)")
     print("   Abriendo navegador en: http://localhost:8000")
     print("=================================================================")
-    # Abrir navegador automaticamente tras 1 segundo
     threading.Timer(1.2, lambda: webbrowser.open("http://localhost:8000")).start()
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
 

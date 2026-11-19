@@ -3,6 +3,7 @@
 """
 Proyecto UAV UTEC-PRIA - Deteccion de Hormigas Cortadoras
 Modulo 3: Vinculador de Telemetria a Formato Nativo DJI Mini 2 SE (Post-Vuelo)
+Adaptado especificamente para cuadricoptero F450 con soporte fijo (sin gimbal).
 Compatible con Windows y Ubuntu.
 """
 
@@ -16,13 +17,10 @@ from datetime import datetime, timezone, timedelta
 import bisect
 from pymavlink import mavutil
 
-# Localizacion automatica de ExifTool
 def obtener_ruta_exiftool():
-    # 1. En PATH del sistema (Ubuntu o Windows)
     en_path = shutil.which("exiftool")
     if en_path:
         return en_path
-    # 2. Rutas estandar en Windows
     rutas_win = [
         os.path.expandvars(r"%LOCALAPPDATA%\Programs\ExifTool\exiftool.exe"),
         r"C:\Program Files\ExifTool\exiftool.exe",
@@ -53,19 +51,16 @@ class PuntoTelemetria:
         self.vz = vz
 
 def gps_a_utc_epoch(semana_gps, ms_semana):
-    """Convierte semana GPS y milisegundos a segundos epoch UTC."""
     t = GPS_EPOCH + timedelta(weeks=semana_gps, milliseconds=ms_semana) - timedelta(seconds=LEAP_SECONDS)
     return t.timestamp()
 
 def cargar_desde_csv(ruta_csv):
-    """Carga puntos de telemetria desde el CSV generado en vivo por grabar_telemetria.py."""
     print(f"[*] Leyendo archivo CSV de telemetria: {ruta_csv}...")
     puntos = []
     with open(ruta_csv, "r", encoding="utf-8") as f:
         lector = csv.DictReader(f)
         for fila in lector:
             try:
-                # Formato: 2026-11-19 15:30:00.123
                 t_str = fila['timestamp_utc'].strip()
                 dt = datetime.strptime(t_str, "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=timezone.utc)
                 ts = dt.timestamp()
@@ -80,15 +75,8 @@ def cargar_desde_csv(ruta_csv):
                 vel = float(fila.get('velocidad_ms', 0.0))
                 
                 pt = PuntoTelemetria(
-                    timestamp_utc=ts,
-                    lat=lat,
-                    lon=lon,
-                    alt_msl=alt_msl,
-                    rel_alt=alt_rel,
-                    roll=roll,
-                    pitch=pitch,
-                    yaw=yaw,
-                    vx=vel
+                    timestamp_utc=ts, lat=lat, lon=lon, alt_msl=alt_msl,
+                    rel_alt=alt_rel, roll=roll, pitch=pitch, yaw=yaw, vx=vel
                 )
                 puntos.append(pt)
             except Exception:
@@ -97,7 +85,6 @@ def cargar_desde_csv(ruta_csv):
     return puntos
 
 def cargar_desde_bin_o_tlog(ruta_log):
-    """Carga telemetria desde un archivo binario .BIN o .tlog de ArduPilot."""
     print(f"[*] Analizando registro binario de vuelo: {ruta_log}...")
     try:
         mlog = mavutil.mavlink_connection(ruta_log)
@@ -160,7 +147,6 @@ def cargar_desde_bin_o_tlog(ruta_log):
             vx = msg.vx / 100.0
             vy = msg.vy / 100.0
             vz = msg.vz / 100.0
-            # MAVLink tlog message timestamp
             utc_ts = getattr(msg, '_timestamp', 0)
             if utc_ts > 0 and lat != 0.0:
                 puntos.append(PuntoTelemetria(utc_ts, lat, lon, alt, rel_alt, c_roll, c_pitch, c_yaw, vx, vy, vz))
@@ -174,7 +160,6 @@ def cargar_desde_bin_o_tlog(ruta_log):
     return puntos
 
 def interpolar_telemetria(puntos, target_utc):
-    """Interpola los parametros de vuelo para el milisegundo exacto de la foto."""
     if not puntos:
         return None
     tiempos = [p.timestamp for p in puntos]
@@ -203,7 +188,6 @@ def interpolar_telemetria(puntos, target_utc):
     )
 
 def obtener_timestamp_imagen(ruta_img):
-    """Lee la fecha y hora de captura original de la imagen."""
     cmd = [
         EXIFTOOL_CMD,
         "-s3",
@@ -221,7 +205,6 @@ def obtener_timestamp_imagen(ruta_img):
             if len(lineas) > 1 and lineas[1].strip().isdigit():
                 subsec = float("0." + lineas[1].strip())
             dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
-            # Ajustar zona horaria local
             offset = -time.timezone if time.localtime().tm_isdst == 0 else -time.altzone
             local_tz = timezone(timedelta(seconds=offset))
             dt = dt.replace(tzinfo=local_tz)
@@ -230,10 +213,35 @@ def obtener_timestamp_imagen(ruta_img):
             pass
     return os.path.getmtime(ruta_img)
 
-def escribir_metadatos_dji(ruta_img, telem, pitch_camara=-90.0):
-    """Inyecta metadatos EXIF y XMP en formato nativo DJI Mini 2 SE."""
+def escribir_metadatos_dji(ruta_img, telem, montura="fijo_nadir"):
+    """
+    Inyecta metadatos EXIF y XMP en formato nativo DJI Mini 2 SE.
+    
+    IMPORTANTE - CUADRICOPTERO F450 SIN GIMBAL:
+    Al tratarse de una montura fija sin estabilizador motorizado, la camara
+    se inclina solidariamente con el fuselaje del dron:
+    - En montura fija nadir (hacia abajo):
+        * GimbalRollDegree = Alabeo del dron (telem.roll)
+        * GimbalPitchDegree = -90.0 + Cabeceo del dron (telem.pitch)
+        * GimbalYawDegree = Rumbo del dron (telem.yaw)
+    De este modo, el software de fotogrametria (WebODM, Pix4D) conoce la
+    inclinacion real del lente al momento exacto de la exposicion.
+    """
     lat_ref = "N" if telem.lat >= 0 else "S"
     lon_ref = "E" if telem.lon >= 0 else "W"
+
+    if montura == "fijo_nadir":
+        g_roll = telem.roll
+        g_pitch = -90.0 + telem.pitch
+        g_yaw = telem.yaw
+    elif montura == "fijo_frontal":
+        g_roll = telem.roll
+        g_pitch = telem.pitch
+        g_yaw = telem.yaw
+    else:  # Gimbal estabilizado teorico
+        g_roll = 0.0
+        g_pitch = -90.0
+        g_yaw = telem.yaw
 
     cmd = [
         EXIFTOOL_CMD,
@@ -252,9 +260,9 @@ def escribir_metadatos_dji(ruta_img, telem, pitch_camara=-90.0):
         f"-XMP-drone-dji:FlightRollDegree={telem.roll:.1f}",
         f"-XMP-drone-dji:FlightPitchDegree={telem.pitch:.1f}",
         f"-XMP-drone-dji:FlightYawDegree={telem.yaw:.1f}",
-        "-XMP-drone-dji:GimbalRollDegree=0.0",
-        f"-XMP-drone-dji:GimbalPitchDegree={pitch_camara:.1f}",
-        f"-XMP-drone-dji:GimbalYawDegree={telem.yaw:.1f}",
+        f"-XMP-drone-dji:GimbalRollDegree={g_roll:.1f}",
+        f"-XMP-drone-dji:GimbalPitchDegree={g_pitch:.1f}",
+        f"-XMP-drone-dji:GimbalYawDegree={g_yaw:.1f}",
         f"-XMP-drone-dji:FlightXSpeed={telem.vx:.1f}",
         f"-XMP-drone-dji:FlightYSpeed={telem.vy:.1f}",
         f"-XMP-drone-dji:FlightZSpeed={telem.vz:.1f}",
@@ -265,7 +273,7 @@ def escribir_metadatos_dji(ruta_img, telem, pitch_camara=-90.0):
     res = subprocess.run(cmd, capture_output=True, text=True)
     return res.returncode == 0
 
-def generar_srt_dji(ruta_video, puntos):
+def generar_srt_dji(ruta_video, puntos, montura="fijo_nadir"):
     """Genera subtitulos de telemetria .SRT para video en formato DJI."""
     base, _ = os.path.splitext(ruta_video)
     ruta_srt = base + ".SRT"
@@ -289,12 +297,18 @@ def generar_srt_dji(ruta_video, puntos):
             ts_fin = str(timedelta(seconds=s+1))
             if len(ts_fin.split(":")) == 2: ts_fin = "00:" + ts_fin
             
+            # Ajuste de angulo de camara sin gimbal
+            if montura == "fijo_nadir":
+                g_pitch = -90.0 + telem.pitch
+            else:
+                g_pitch = telem.pitch
+
             bloque = (
                 f"{s + 1}\n"
                 f"{ts_ini},000 --> {ts_fin},000\n"
                 f"[latitude: {telem.lat:.6f}] [longitude: {telem.lon:.6f}] "
                 f"[rel_alt: {telem.rel_alt:.3f} abs_alt: {telem.alt_msl:.3f}] "
-                f"[flight_yaw: {telem.yaw:.1f}] [iso: 100] [shutter: 1/240]\n\n"
+                f"[flight_yaw: {telem.yaw:.1f}] [gimbal_pitch: {g_pitch:.1f}] [iso: 100] [shutter: 1/240]\n\n"
             )
             f.write(bloque)
     print(f"[+] Archivo de subtitulos generado: {ruta_srt}")
@@ -303,13 +317,14 @@ def generar_srt_dji(ruta_video, puntos):
 def main():
     print("=================================================================")
     print("   VINCULADOR DE TELEMETRIA A FORMATO NATIVO DJI MINI 2 SE")
+    print("   Plataforma: Cuadricoptero F450 (Soporte Fijo sin Gimbal)")
     print("   Proyecto UAV Hormigas Cortadoras - UTEC PRIA")
     print("=================================================================")
 
-    parser = argparse.ArgumentParser(description="Etiquetador de fotos/videos a formato DJI Mini 2 SE")
+    parser = argparse.ArgumentParser(description="Etiquetador de fotos/videos a formato DJI Mini 2 SE para F450 sin gimbal")
     parser.add_argument("--log", help="Ruta al archivo .CSV, .BIN o .tlog de telemetria")
     parser.add_argument("--media", help="Carpeta con fotos o archivo de video MP4")
-    parser.add_argument("--gimbal-pitch", type=float, default=-90.0, help="Angulo de camara (-90 para nadir/vertical al suelo)")
+    parser.add_argument("--mount", choices=["fijo_nadir", "fijo_frontal", "gimbal_estabilizado"], default="fijo_nadir", help="Tipo de montura (por defecto: fijo_nadir)")
     parser.add_argument("--offset", type=float, default=0.0, help="Ajuste manual de segundos si es necesario")
     args = parser.parse_args()
 
@@ -331,7 +346,6 @@ def main():
         if sys.stdin.isatty(): input("\nPresione ENTER para salir...")
         return 1
 
-    # Cargar puntos segun extension
     ext = os.path.splitext(log_path)[1].lower()
     if ext == '.csv':
         puntos = cargar_desde_csv(log_path)
@@ -345,7 +359,7 @@ def main():
 
     # Si es video
     if os.path.isfile(media_path) and media_path.lower().endswith((".mp4", ".mov")):
-        generar_srt_dji(media_path, puntos)
+        generar_srt_dji(media_path, puntos, montura=args.mount)
         print("\n[+] Proceso completado exitosamente.")
         if sys.stdin.isatty(): input("\nPresione ENTER para finalizar...")
         return 0
@@ -360,7 +374,7 @@ def main():
             if sys.stdin.isatty(): input("\nPresione ENTER para salir...")
             return 1
 
-        print(f"\n[*] Procesando {len(archivos)} fotografias...")
+        print(f"\n[*] Procesando {len(archivos)} fotografias (Montura: {args.mount})...")
         exitos = 0
         for i, nombre in enumerate(archivos, 1):
             ruta_foto = os.path.join(media_path, nombre)
@@ -368,10 +382,10 @@ def main():
             telem = interpolar_telemetria(puntos, t_foto)
 
             if telem:
-                ok = escribir_metadatos_dji(ruta_foto, telem, pitch_camara=args.gimbal_pitch)
+                ok = escribir_metadatos_dji(ruta_foto, telem, montura=args.mount)
                 if ok:
                     exitos += 1
-                    print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m [DJI OK]")
+                    print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m, Roll: {telem.roll:.1f}°, Pitch: {(-90.0 + telem.pitch):.1f}° [DJI OK]")
                 else:
                     print(f"  [{i}/{len(archivos)}] {nombre} -> Error al escribir metadatos con ExifTool.")
             else:
@@ -379,6 +393,7 @@ def main():
 
         print("\n=================================================================")
         print(f"   RESUMEN: {exitos} de {len(archivos)} fotografias etiquetadas.")
+        print(f"   Compensacion de angulo sin gimbal: ACTIVA (Alabeo y cabeceo transferidos a la camara).")
         print("   Formato: NATIVO DJI MINI 2 SE (EXIF + XMP drone-dji)")
         print("   Compatible directamente con: WebODM, Pix4D, Agisoft, QGIS, DJI Terra")
         print("=================================================================")
