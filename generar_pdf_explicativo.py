@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Generador del Manual Operativo y Muestra de Datos en PDF
+Generador del Manual Operativo y Muestra de Datos en PDF (Actualizado con Dashboard Web)
 Proyecto UAV UTEC-PRIA - Deteccion de Hormigas Cortadoras
 """
 
@@ -80,31 +80,31 @@ def construir_pdf(ruta_salida):
         'TituloPrincipal',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=22,
-        leading=26,
+        fontSize=20,
+        leading=24,
         textColor=c_primario,
-        spaceAfter=10
+        spaceAfter=8
     )
     
     subtitulo_portada = ParagraphStyle(
         'SubtituloPortada',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=12,
-        leading=16,
+        fontSize=11,
+        leading=15,
         textColor=c_secundario,
-        spaceAfter=25
+        spaceAfter=20
     )
 
     encabezado_1 = ParagraphStyle(
         'Encabezado1',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=14,
-        leading=18,
+        fontSize=13,
+        leading=17,
         textColor=c_primario,
-        spaceBefore=14,
-        spaceAfter=8,
+        spaceBefore=12,
+        spaceAfter=6,
         keepWithNext=True
     )
 
@@ -112,11 +112,11 @@ def construir_pdf(ruta_salida):
         'Encabezado2',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=11,
-        leading=15,
+        fontSize=10.5,
+        leading=14,
         textColor=c_secundario,
-        spaceBefore=10,
-        spaceAfter=4,
+        spaceBefore=8,
+        spaceAfter=3,
         keepWithNext=True
     )
 
@@ -124,10 +124,10 @@ def construir_pdf(ruta_salida):
         'Cuerpo',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=9.5,
-        leading=13.5,
+        fontSize=9,
+        leading=13,
         textColor=c_texto,
-        spaceAfter=6
+        spaceAfter=5
     )
 
     cuerpo_negrita = ParagraphStyle(
@@ -141,7 +141,7 @@ def construir_pdf(ruta_salida):
         parent=styles['Normal'],
         fontName='Courier',
         fontSize=8,
-        leading=10.5,
+        leading=10,
         textColor=colors.HexColor("#2D3748")
     )
 
@@ -149,8 +149,8 @@ def construir_pdf(ruta_salida):
         'CalloutTexto',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=9,
-        leading=12.5,
+        fontSize=8.5,
+        leading=12,
         textColor=c_verde
     )
 
@@ -159,77 +159,80 @@ def construir_pdf(ruta_salida):
     # =========================================================================
     # PORTADA
     # =========================================================================
-    story.append(Spacer(1, 15))
     story.append(Paragraph("UNIVERSIDAD TECNOLOGICA DEL URUGUAY (UTEC)", ParagraphStyle('UTEC', fontName='Helvetica-Bold', fontSize=10, textColor=c_acento, leading=12)))
-    story.append(Paragraph("PROGRAMA DE INVESTIGACION APLICADA (PRIA)", ParagraphStyle('PRIA', fontName='Helvetica', fontSize=9, textColor=colors.HexColor("#718096"), leading=11)))
-    story.append(Spacer(1, 15))
-    story.append(HRFlowable(width="100%", thickness=2, color=c_primario, spaceBefore=0, spaceAfter=15))
+    story.append(Paragraph("PROGRAMA DE INVESTIGACION APLICADA (PRIA)", ParagraphStyle('PRIA', fontName='Helvetica', fontSize=8.5, textColor=colors.HexColor("#718096"), leading=11)))
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=2, color=c_primario, spaceBefore=0, spaceAfter=12))
     
-    story.append(Paragraph("Manual Operativo de Telemetria, Sincronizacion y Georreferenciacion en Formato DJI Mini 2 SE", titulo_principal))
-    story.append(Paragraph("Sistema de integracion entre cuadricoptero F450 (Pixhawk 2.4.8 / ArduPilot) y camara GoPro HERO13 Black para deteccion de caminos de hormigas cortadoras.", subtitulo_portada))
+    story.append(Paragraph("Manual Operativo: Dashboard Web, Telemetria en Vivo y Formato DJI Mini 2 SE", titulo_principal))
+    story.append(Paragraph("Sistema integral con interfaz grafica local (http://localhost:8000) para control de vuelo F450 (Pixhawk / ArduPilot), telemetria 915 MHz, sincronizacion y descarga automatica de fotos GoPro HERO13 Black.", subtitulo_portada))
     
-    # Cuadro informativo de version y estado
     info_meta = [
-        [Paragraph("<b>Plataforma UAV:</b>", cuerpo), Paragraph("HAWK'S WORK F450 | Pixhawk 2.4.8 | GNSS Radiolink SE100 M8N", cuerpo)],
-        [Paragraph("<b>Sensor Optico:</b>", cuerpo), Paragraph("GoPro HERO13 Black (Video 4K / Foto a intervalos)", cuerpo)],
-        [Paragraph("<b>Enlace de Datos:</b>", cuerpo), Paragraph("Radiotelemetria SiK 915 MHz (500 mW) + USB Open GoPro", cuerpo)],
-        [Paragraph("<b>Compatibilidad:</b>", cuerpo), Paragraph("Windows 10/11 y Ubuntu Linux (100% Funcional sin programacion)", cuerpo)],
-        [Paragraph("<b>Formato de Salida:</b>", cuerpo), Paragraph("Nativo DJI Mini 2 SE (EXIF estandar + XMP drone-dji)", cuerpo)],
+        [Paragraph("<b>Plataforma UAV:</b>", cuerpo), Paragraph("Cuadricoptero F450 | Pixhawk 2.4.8 | GNSS Radiolink SE100 M8N", cuerpo)],
+        [Paragraph("<b>Sensor Optico:</b>", cuerpo), Paragraph("GoPro HERO13 Black (Foto por intervalo / Video 4K / USB Open GoPro)", cuerpo)],
+        [Paragraph("<b>Interfaz de Operador:</b>", cuerpo), Paragraph("Dashboard Web local (http://localhost:8000) con telemetria en vivo", cuerpo)],
+        [Paragraph("<b>Enlace en el Aire:</b>", cuerpo), Paragraph("Radios de telemetria SiK 915 MHz (500 mW)", cuerpo)],
+        [Paragraph("<b>Formato de Salida:</b>", cuerpo), Paragraph("Nativo DJI Mini 2 SE (EXIF estandar + XMP drone-dji) para WebODM / GIS", cuerpo)],
     ]
     t_meta = Table(info_meta, colWidths=[130, 374])
     t_meta.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F1F5F9")),
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 8),
         ('RIGHTPADDING', (0, 0), (-1, -1), 8),
     ]))
     story.append(t_meta)
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 12))
 
     # =========================================================================
-    # SECCION 1: EXPLICACION SIMPLE PARA OPERADORES
+    # SECCION 1: INTERFAZ WEB LOCALHOST (COMO SE USA)
     # =========================================================================
-    story.append(Paragraph("1. ¿Que hace este sistema y como funciona?", encabezado_1))
+    story.append(Paragraph("1. Operacion Mediante el Dashboard Web (http://localhost:8000)", encabezado_1))
     story.append(Paragraph(
-        "El objetivo principal del proyecto es sobrevolar parcelas rurales con el dron F450 y filmar o fotografiar el terreno con la camara GoPro HERO13 para localizar nidos y caminos de hormigas cortadoras. "
-        "Para que las imagenes sirvan cientificamente, cada foto debe tener incrustada la posicion exacta donde estaba el dron (latitud, longitud y altura real sobre el suelo) en el milisegundo preciso del disparo.",
-        cuerpo
-    ))
-    story.append(Paragraph(
-        "<b>El problema habitual:</b> La camara GoPro y la computadora de vuelo del dron (Pixhawk) son dos equipos independientes. Si sus relojes difieren por apenas 2 segundos, a 5 metros por segundo de vuelo, las fotos quedaran desplazadas 10 metros de su lugar verdadero.",
-        cuerpo
-    ))
-    story.append(Paragraph(
-        "<b>La solucion implementada:</b> Este sistema resuelve todo el ciclo en 3 pasos muy sencillos que se ejecutan haciendo un solo clic:",
+        "Para que cualquier operador pueda utilizar el sistema en campo sin tocar codigo ni terminales, se dispone de un servidor web local. "
+        "Al hacer doble clic en <b>iniciar_dashboard.bat</b> (Windows) o ejecutar <b>./iniciar_dashboard.sh</b> (Ubuntu), se abre de forma automatica su navegador en <code>http://localhost:8000</code>.",
         cuerpo
     ))
 
-    pasos_resumen = [
-        [Paragraph("<b>Fase</b>", cuerpo_negrita), Paragraph("<b>Momento</b>", cuerpo_negrita), Paragraph("<b>Accion del operador</b>", cuerpo_negrita), Paragraph("<b>Resultado automatico</b>", cuerpo_negrita)],
-        [Paragraph("<b>1. Pre-Vuelo</b>", cuerpo), Paragraph("Antes de volar (en taller o vehiculo)", cuerpo), Paragraph("Conectar GoPro y Pixhawk a la PC con cable USB y hacer doble clic en <i>1_sincronizar_relojes</i>.", cuerpo), Paragraph("El reloj de la camara se calibra con la hora atomica del GPS a precision de milisegundos.", cuerpo)],
-        [Paragraph("<b>2. Vuelo</b>", cuerpo), Paragraph("Durante el relevamiento", cuerpo), Paragraph("Conectar la antena de 915 MHz a la PC y hacer doble clic en <i>2_grabar_telemetria</i>.", cuerpo), Paragraph("La PC recolecta y guarda la trayectoria completa del dron en vivo en un archivo CSV ordenado.", cuerpo)],
-        [Paragraph("<b>3. Post-Vuelo</b>", cuerpo), Paragraph("Al finalizar el vuelo", cuerpo), Paragraph("Conectar la memoria de la GoPro y hacer doble clic en <i>3_vincular_vuelo_dji</i>.", cuerpo), Paragraph("Cruza tiempos, calcula posicion y actitud de cada foto y las deja en formato nativo DJI Mini 2 SE.", cuerpo)],
+    elementos_web = [
+        [Paragraph("<b>Componente en Pantalla</b>", cuerpo_negrita), Paragraph("<b>Funcionamiento y Accion</b>", cuerpo_negrita)],
+        [
+            Paragraph("<b>Panel Pre-Vuelo (Cables conectados)</b>", cuerpo),
+            Paragraph("Muestra el estado de la GoPro y la Pixhawk. Al pulsar <b>[Sincronizar Relojes]</b>, el reloj de la camara se calibra con la hora exacta del GPS y el sistema toma nota de las fotos previas.", cuerpo)
+        ],
+        [
+            Paragraph("<b>Boton [Comenzar Grabacion]</b>", cuerpo),
+            Paragraph("Conecta la antena de 915 MHz e inicia la grabacion continua de la trayectoria del dron en vivo.", cuerpo)
+        ],
+        [
+            Paragraph("<b>Panel de Telemetria en Vivo</b>", cuerpo),
+            Paragraph("Muestra en tiempo real: Altura sobre el suelo (metros), Modo de vuelo (Loiter, Auto, etc.), Voltaje de bateria de la LiPo, Satelites GPS, Rumbo (grados) y Coordenadas.", cuerpo)
+        ],
+        [
+            Paragraph("<b>Boton [Finalizar y Procesar]</b>", cuerpo),
+            Paragraph("Detiene la telemetria, se conecta a la GoPro por cable USB, <b>descarga automaticamente a la computadora solo las fotos nuevas del vuelo</b> y les inyecta los metadatos de DJI Mini 2 SE.", cuerpo)
+        ],
     ]
-    t_resumen = Table(pasos_resumen, colWidths=[70, 95, 175, 164])
-    t_resumen.setStyle(TableStyle([
+    t_web = Table(elementos_web, colWidths=[160, 344])
+    t_web.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), c_secundario),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, c_fondo_tabla]),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]))
-    story.append(t_resumen)
-    story.append(Spacer(1, 15))
+    story.append(t_web)
+    story.append(Spacer(1, 10))
 
     # =========================================================================
-    # SECCION 2: MUESTRA REAL DE DATOS (COMO SALEN LOS DATOS)
+    # SECCION 2: MUESTRA DE DATOS RESULTANTES
     # =========================================================================
     story.append(PageBreak())
     story.append(Paragraph("2. Muestra y Estructura de los Datos Resultantes", encabezado_1))
@@ -239,7 +242,6 @@ def construir_pdf(ruta_salida):
         cuerpo
     ))
 
-    # Tabla comparativa de metadatos
     datos_muestra = [
         [Paragraph("<b>Etiqueta de Metadato</b>", cuerpo_negrita), Paragraph("<b>Valor Inyectado de Ejemplo</b>", cuerpo_negrita), Paragraph("<b>Significado practico en fotogrametria e IA</b>", cuerpo_negrita)],
         [Paragraph("<b>Make</b>", codigo), Paragraph("DJI", codigo), Paragraph("Fabricante reconocido automaticamente por WebODM, Pix4D y Metashape.", cuerpo)],
@@ -262,27 +264,20 @@ def construir_pdf(ruta_salida):
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, c_fondo_tabla]),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]))
     story.append(t_datos)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
 
     # Muestra del CSV en vivo
     story.append(Paragraph("2.1. Archivo CSV generado en tiempo real durante el vuelo (telemetria.csv)", encabezado_2))
-    story.append(Paragraph(
-        "Mientras el dron vuela, la antena de 915 MHz conectada a la PC escribe continuamente un registro en tiempo real. "
-        "Cada fila representa 250 milisegundos de vuelo (4 lecturas por segundo):",
-        cuerpo
-    ))
-
     muestra_csv = [
         [Paragraph("<b>timestamp_utc</b>", codigo), Paragraph("<b>latitud</b>", codigo), Paragraph("<b>longitud</b>", codigo), Paragraph("<b>alt_rel</b>", codigo), Paragraph("<b>yaw</b>", codigo), Paragraph("<b>bat_v</b>", codigo), Paragraph("<b>modo</b>", codigo)],
         [Paragraph("2026-11-20 10:14:02.250", codigo), Paragraph("-34.582104", codigo), Paragraph("-58.421590", codigo), Paragraph("25.30", codigo), Paragraph("145.8", codigo), Paragraph("11.6V", codigo), Paragraph("AUTO", codigo)],
         [Paragraph("2026-11-20 10:14:02.500", codigo), Paragraph("-34.582110", codigo), Paragraph("-58.421598", codigo), Paragraph("25.35", codigo), Paragraph("145.9", codigo), Paragraph("11.6V", codigo), Paragraph("AUTO", codigo)],
-        [Paragraph("2026-11-20 10:14:02.750", codigo), Paragraph("-34.582116", codigo), Paragraph("-58.421605", codigo), Paragraph("25.40", codigo), Paragraph("146.0", codigo), Paragraph("11.5V", codigo), Paragraph("AUTO", codigo)],
     ]
     t_csv = Table(muestra_csv, colWidths=[120, 70, 70, 50, 45, 45, 104])
     t_csv.setStyle(TableStyle([
@@ -299,53 +294,17 @@ def construir_pdf(ruta_salida):
     story.append(t_csv)
     story.append(Spacer(1, 10))
 
-    # Muestra de subtitulos SRT para video
-    story.append(Paragraph("2.2. Archivo de Subtitulos generado para grabaciones de Video (.SRT)", encabezado_2))
-    story.append(Paragraph(
-        "Si el relevamiento se realizo grabando video continuo en lugar de fotos, el sistema produce automaticamente un archivo con la misma extension (.SRT). "
-        "Al reproducir el video en reproductores como VLC o cargarlo en herramientas de vision por computadora, la telemetria se visualiza sincronizada segundo a segundo:",
-        cuerpo
-    ))
-    
-    bloque_srt = [
-        [Paragraph(
-            "1<br/>"
-            "00:00:00,000 --&gt; 00:00:01,000<br/>"
-            "[latitude: -34.582104] [longitude: -58.421590] [rel_alt: 25.300 abs_alt: 68.500] [flight_yaw: 145.8] [iso: 100] [shutter: 1/240]<br/><br/>"
-            "2<br/>"
-            "00:00:01,000 --&gt; 00:00:02,000<br/>"
-            "[latitude: -34.582125] [longitude: -58.421612] [rel_alt: 25.320 abs_alt: 68.520] [flight_yaw: 146.1] [iso: 100] [shutter: 1/240]",
-            codigo
-        )]
-    ]
-    t_srt = Table(bloque_srt, colWidths=[504])
-    t_srt.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#1E293B")),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor("#38BDF8")),
-        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#0F172A")),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('LEFTPADDING', (0, 0), (-1, -1), 10),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-    ]))
-    story.append(t_srt)
-
     # =========================================================================
-    # SECCION 3: GUIA OPERATIVA PASO A PASO PARA EL CAMPO
+    # SECCION 3: PROTOCOLO DE CAMPO
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("3. Guia Operativa Paso a Paso (Protocolo de Campo)", encabezado_1))
-    story.append(Paragraph(
-        "Siga esta lista de verificacion antes, durante y despues de cada sesion de vuelo en el campo:",
-        cuerpo
-    ))
+    story.append(Paragraph("3. Protocolo de Operacion de Campo (Checklist)", encabezado_1))
 
-    # Cuadro destacado de advertencia sobre antenas
     aviso_antena = [
         [Paragraph(
-            "<b>REGLA CRITICA DE SEGURIDAD PARA LAS RADIOS DE 915 MHz:</b><br/>"
-            "NUNCA conecte la radio USB a la computadora ni alimente el dron sin antes haber enroscado las antenas. "
-            "Al ser modulos de 500 mW (alta potencia), transmitir sin antena puede quemar el chip amplificador de radio en segundos.",
+            "<b>REGLA OBLIGATORIA DE SEGURIDAD PARA RADIOS DE 915 MHz:</b><br/>"
+            "Enrosque firmemente las antenas ANTES de conectar las radios a la computadora o encender el dron. "
+            "Emitir radiofrecuencia a 500 mW sin antena puede danar el transmisor en cuestion de segundos.",
             callout_texto
         )]
     ]
@@ -353,8 +312,8 @@ def construir_pdf(ruta_salida):
     t_aviso.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), c_verde_fondo),
         ('BOX', (0, 0), (-1, -1), 1, c_verde),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ('LEFTPADDING', (0, 0), (-1, -1), 10),
         ('RIGHTPADDING', (0, 0), (-1, -1), 10),
     ]))
@@ -363,75 +322,25 @@ def construir_pdf(ruta_salida):
 
     story.append(Paragraph("3.1. En la Base (Antes de despegar)", encabezado_2))
     story.append(Paragraph(
-        "1. <b>Configurar la GoPro:</b> Encienda la camara. Deslice la pantalla hacia abajo &gt; <i>Preferencias</i> &gt; <i>Conexiones</i> &gt; <i>Conexion USB</i> &gt; Verifique que este seleccionado <b>GoPro Connect</b>.<br/>"
-        "2. <b>Conectar al PC:</b> Conecte la GoPro mediante cable USB-C a la laptop. Conecte la Pixhawk por cable USB (o encienda el dron para enlace por radio).<br/>"
-        "3. <b>Sincronizar:</b> Ejecute con doble clic <code>1_sincronizar_relojes.bat</code> (en Windows) o <code>./1_sincronizar_relojes.sh</code> (en Ubuntu).<br/>"
-        "4. <b>Verificar:</b> La consola confirmara: <i>Sincronizacion realizada exitosamente (Diferencia &lt; 0.05 s)</i> y reportara la bateria.<br/>"
-        "5. <b>Desconectar:</b> Desconecte el cable USB de la camara y montela firmemente orientada hacia abajo (Nadir) en el soporte del dron.",
+        "1. Conecte la GoPro por USB-C (en modo <i>GoPro Connect</i>) y la Pixhawk por USB.<br/>"
+        "2. Ejecute <code>iniciar_dashboard.bat</code> (Windows) o <code>./iniciar_dashboard.sh</code> (Ubuntu). Se abrira <code>http://localhost:8000</code>.<br/>"
+        "3. Haga clic en <b>[Sincronizar Relojes]</b>. Verifique el aviso verde de confirmacion y el porcentaje de bateria.<br/>"
+        "4. Desconecte la camara y montela perpendicular al suelo (Nadir) en el dron.",
         cuerpo
     ))
 
-    story.append(Paragraph("3.2. Durante la Mision de Vuelo", encabezado_2))
+    story.append(Paragraph("3.2. Durante el Vuelo", encabezado_2))
     story.append(Paragraph(
-        "1. <b>Conectar Antena:</b> Enrosque la antena al modulo de telemetria USB y conectelo a la computadora.<br/>"
-        "2. <b>Iniciar Grabador:</b> Ejecute con doble clic <code>2_grabar_telemetria.bat</code> (Windows) o <code>./2_grabar_telemetria.sh</code> (Ubuntu).<br/>"
-        "3. <b>Seleccionar Puerto:</b> El programa listara los puertos disponibles. Presione ENTER para aceptar la opcion sugerida (ej. COM5 o /dev/ttyUSB0).<br/>"
-        "4. <b>Confirmar Enlace:</b> Apenas se encienda el dron, vera en pantalla: <i>Modo: LOITER | Sats: 14 | AltRel: 0.0m | Bat: 12.4V</i>.<br/>"
-        "5. <b>Iniciar Camara y Despegar:</b> Presione grabar en la GoPro e inicie el vuelo planificado en Mission Planner.<br/>"
-        "6. <b>Al Aterrizar:</b> Presione <code>Ctrl + C</code> en la ventana del grabador de telemetria. El archivo quedara cerrado y guardado.",
+        "1. Conecte la antena receptora USB de 915 MHz a la laptop.<br/>"
+        "2. En la pagina web, haga clic en <b>[Comenzar Grabacion]</b>. Vera la telemetria actualizandose en vivo.<br/>"
+        "3. Inicie la grabacion o toma de fotos en la GoPro y realice el vuelo planificado.<br/>"
+        "4. Al aterrizar el dron, conecte la GoPro por cable USB a la computadora y haga clic en <b>[Finalizar y Procesar]</b>.<br/>"
+        "5. El sistema descargara automaticamente las fotos nuevas tomadas en el vuelo, les inyectara los metadatos DJI Mini 2 SE y le ofrecera un boton para abrir la carpeta de resultados.",
         cuerpo
     ))
-
-    story.append(Paragraph("3.3. Post-Vuelo (Vinculacion de Datos)", encabezado_2))
-    story.append(Paragraph(
-        "1. <b>Descargar Fotos:</b> Conecte la tarjeta microSD de la GoPro a la computadora y copie la carpeta con las fotos (ej. <code>C:\\Vuelos\\Mision_1</code>).<br/>"
-        "2. <b>Ejecutar Vinculador:</b> Ejecute con doble clic <code>3_vincular_vuelo_dji.bat</code> (Windows) o <code>./3_vincular_vuelo_dji.sh</code> (Ubuntu).<br/>"
-        "3. <b>Arrastrar Archivos:</b> Cuando lo solicite, arrastre a la ventana el archivo <code>telemetria.csv</code> (o el <code>.BIN</code> de la Pixhawk) y presione ENTER. Luego arrastre la carpeta con las fotos y presione ENTER.<br/>"
-        "4. <b>Resultado:</b> El sistema calculara la posicion milisegundo a milisegundo e inyectara los metadatos DJI. Al finalizar, cada imagen contendra sus coordenadas y altura real sobre el suelo.",
-        cuerpo
-    ))
-
-    # =========================================================================
-    # SECCION 4: RESOLUCION DE PROBLEMAS COMUNES
-    # =========================================================================
-    story.append(Spacer(1, 10))
-    story.append(Paragraph("4. Preguntas Frecuentes y Resolucion de Problemas", encabezado_1))
-    
-    faq_data = [
-        [Paragraph("<b>Problema observado</b>", cuerpo_negrita), Paragraph("<b>Causa y solucion inmediata</b>", cuerpo_negrita)],
-        [
-            Paragraph("La PC no detecta la GoPro por cable USB.", cuerpo),
-            Paragraph("Asegurese de que la opcion en la pantalla de la GoPro sea <b>GoPro Connect</b> y no MTP. Si uso un cable USB generico de celular que solo carga bateria, reemplacelo por un cable de datos.", cuerpo)
-        ],
-        [
-            Paragraph("El grabador dice: <i>Acceso denegado al puerto COM</i>.", cuerpo),
-            Paragraph("Mission Planner ya tiene abierto el puerto COM en exclusivo. Solucion: Cierre Mission Planner, o en el grabador elija la opcion <b>U</b> (UDP) para recibir los datos reenviados por Mission Planner.", cuerpo)
-        ],
-        [
-            Paragraph("En Ubuntu dice: <i>Permission denied: /dev/ttyUSB0</i>.", cuerpo),
-            Paragraph("Su usuario no pertenece al grupo 'dialout'. Ejecute en terminal: <code>sudo usermod -a -G dialout $USER</code> y reinicie la sesion del sistema.", cuerpo)
-        ],
-        [
-            Paragraph("¿Puedo usar el log .BIN de la Pixhawk en vez de la radio?", cuerpo),
-            Paragraph("Si, totalmente. El programa <code>3_vincular_vuelo_dji</code> acepta indistintamente archivos <code>.csv</code>, <code>.BIN</code> descargados de Mission Planner o registros <code>.tlog</code>.", cuerpo)
-        ],
-    ]
-    t_faq = Table(faq_data, colWidths=[170, 334])
-    t_faq.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), c_secundario),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, c_fondo_tabla]),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    story.append(t_faq)
 
     doc.build(story, canvasmaker=NumberedCanvas)
-    print(f"[+] Documento PDF generado exitosamente en: {ruta_salida}")
+    print(f"[+] Documento PDF actualizado: {ruta_salida}")
 
 if __name__ == "__main__":
     salida = sys.argv[1] if len(sys.argv) > 1 else "Manual_Operativo_Telemetria_GoPro_DJI.pdf"
