@@ -240,7 +240,7 @@ def bucle_telemetria():
 
             ahora = time.time()
             # Escribir linea de telemetria en CSV cada 250 ms (4 Hz)
-            if ahora - estado.ultimo_registro_tiempo >= 0.25 and estado.lat != 0.0 and estado.archivo_csv:
+            if ahora - estado.ultimo_registro_tiempo >= 0.25 and estado.archivo_csv:
                 t_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 linea = (
                     f"{t_utc},{estado.lat:.7f},{estado.lon:.7f},{estado.alt_msl:.2f},"
@@ -1112,6 +1112,10 @@ def start_flight(data: dict):
     gopro_msg = "GoPro no conectada por USB"
     ip_gp = estado.gopro_ip or buscar_ip_gopro()
     if ip_gp:
+        # Registrar medios existentes en la camara antes de comenzar el vuelo
+        medios_existentes = obtener_lista_medios_gopro(ip_gp)
+        estado.fotos_previas = {(d, n) for d, n, cre, size in medios_existentes}
+
         ok, msg = activar_shutter_gopro(ip_gp, iniciar=True)
         gopro_iniciada = ok
         gopro_msg = msg
@@ -1141,8 +1145,8 @@ def tarea_procesamiento_post_vuelo():
 
         ip = estado.gopro_ip or buscar_ip_gopro()
         if not ip:
-            for seg in range(10):
-                estado.mensaje_proceso = f"Esperando conexion USB de la GoPro ({10 - seg} s)... Conecte el cable a la PC."
+            for seg in range(15):
+                estado.mensaje_proceso = f"Esperando conexion USB de la GoPro ({15 - seg} s)... Conecte el cable a la PC."
                 time.sleep(1.0)
                 ip = buscar_ip_gopro()
                 if ip:
@@ -1244,6 +1248,9 @@ def tarea_procesamiento_post_vuelo():
                     metadatos_directas.append((ruta_f, telem, dt_utc_str))
             etiquetadas = escribir_metadatos_dji_batch(metadatos_directas)
             total_fotos_generadas += etiquetadas
+
+        for d, n, size in nuevos:
+            estado.fotos_previas.add((d, n))
 
         estado.progreso_porcentaje = 100
         estado.estado_proceso = "COMPLETADO"
