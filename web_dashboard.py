@@ -348,7 +348,7 @@ async def index():
                     <div style="font-size: 0.82rem; color: var(--text-muted);" id="txt-scan-sub">Comprobando radio 915 MHz, bateria LiPo 3S y conexion USB de GoPro...</div>
                 </div>
                 <div>
-                    <button class="scan-btn" onclick="ejecutarAutoescaneo()">Re-Escanear Todo</button>
+                    <button class="scan-btn" id="btn-scan" onclick="ejecutarAutoescaneo()">Re-Escanear Todo</button>
                 </div>
             </div>
             <div class="scan-grid">
@@ -497,6 +497,11 @@ async def index():
         }
 
         async function ejecutarAutoescaneo() {
+            const btnScan = document.getElementById("btn-scan");
+            if (btnScan) {
+                btnScan.disabled = true;
+                btnScan.innerText = "Escaneando...";
+            }
             logMsg("[AUTOESCANEO] Iniciando comprobacion activa de radio 915 MHz, bateria y GoPro...");
             document.getElementById("txt-scan-titulo").innerText = "Autoescaneo en curso...";
             document.getElementById("txt-scan-sub").innerText = "Probando comunicacion serie y enlace USB...";
@@ -567,6 +572,11 @@ async def index():
                 actualizarHardware();
             } catch (e) {
                 logMsg(`[AUTOESCANEO ERROR] ${e}`);
+            } finally {
+                if (btnScan) {
+                    btnScan.disabled = false;
+                    btnScan.innerText = "Re-Escanear Todo";
+                }
             }
         }
 
@@ -756,7 +766,7 @@ async def index():
         async function iniciarGrabacion() {
             // Comprobar resultado del autoescaneo previo
             if (ultimoAutoescaneo && !ultimoAutoescaneo.telemetria.conectada) {
-                const confirma = confirm("ADVERTENCIA DE AUTOESCANEO:\n\nNo se han detectado paquetes de telemetria desde la radio 915 MHz.\nVerifique que el dron tenga la bateria LiPo 3S conectada y la radio este conectada a la PC.\n\n¿Desea forzar el inicio de todos modos?");
+                const confirma = confirm(`ADVERTENCIA DE AUTOESCANEO:\n\nNo se han detectado paquetes de telemetria desde la radio 915 MHz.\nVerifique que el dron tenga la bateria LiPo 3S conectada y la radio este conectada a la PC.\n\n¿Desea forzar el inicio de todos modos?`);
                 if (!confirma) return;
             }
 
