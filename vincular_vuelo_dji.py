@@ -159,22 +159,33 @@ def cargar_desde_bin_o_tlog(ruta_log):
     print(f"[+] Total de puntos de GPS extraidos: {len(puntos)}")
     return puntos
 
-def interpolar_telemetria(puntos, target_utc):
+def interpolar_telemetria(puntos, target_time):
     if not puntos:
         return None
+
+    if isinstance(target_time, datetime):
+        if target_time.tzinfo is None:
+            target_ts = target_time.replace(tzinfo=timezone.utc).timestamp()
+        else:
+            target_ts = target_time.timestamp()
+    elif isinstance(target_time, (int, float)):
+        target_ts = float(target_time)
+    else:
+        return None
+
     tiempos = [p.timestamp for p in puntos]
-    idx = bisect.bisect_left(tiempos, target_utc)
+    idx = bisect.bisect_left(tiempos, target_ts)
     if idx == 0: return puntos[0]
     if idx >= len(puntos): return puntos[-1]
 
     p0 = puntos[idx - 1]
     p1 = puntos[idx]
-    dt = p1.timestamp - p0.timestamp
-    if dt <= 0: return p0
+    dt_sec = p1.timestamp - p0.timestamp
+    if dt_sec <= 0: return p0
 
-    f = max(0.0, min(1.0, (target_utc - p0.timestamp) / dt))
+    f = max(0.0, min(1.0, (target_ts - p0.timestamp) / dt_sec))
     return PuntoTelemetria(
-        timestamp_utc=target_utc,
+        timestamp_utc=target_ts,
         lat=p0.lat + f * (p1.lat - p0.lat),
         lon=p0.lon + f * (p1.lon - p0.lon),
         alt_msl=p0.alt_msl + f * (p1.alt_msl - p0.alt_msl),

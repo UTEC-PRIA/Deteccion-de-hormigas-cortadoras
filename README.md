@@ -103,7 +103,29 @@ El programa abrira automaticamente su navegador en:
 
 ---
 
-## 6. Documentacion PDF
+## 6. Capturas de Pantalla y Datos de Ejemplo
+
+### Interfaz del Dashboard Web
+* **Vista General con Autoescaneo OK:** [docs/imagenes/dashboard_autoescaneo_ok.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_autoescaneo_ok.png)
+* **Estado de Grabacion en Vivo Verificado:** [docs/imagenes/dashboard_grabando_en_vivo.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_grabando_en_vivo.png)
+* **Estado en Espera (Standby):** [docs/imagenes/dashboard_en_espera.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_en_espera.png)
+
+### Ejemplo de Salida Generada
+En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/ejemplos_salida/vuelo_mision_campo_01/) se incluye un conjunto de datos sinteticos para pruebas:
+* `telemetria.csv`: Archivo de telemetria a 4 Hz con coordenadas, altura, actitud y voltaje de bateria 3S.
+* `fotos/`: Fotografias aereas sinteticas con metadatos reales nativos de **DJI Mini 2 SE** inyectados (verificables mediante ExifTool o software fotogrametrico WebODM).
+* `video_vuelo_mision_01.SRT`: Archivo de subtitulos de telemetria por segundo en formato DJI.
+
+---
+
+## 7. Instrucciones y Prompts para Otras IAs
+
+Para generar nuevos diagramas de arquitectura (Mermaid, PlantUML) o ilustraciones renderizadas en 3D del cuadricoptero F450 y la estacion de tierra con cualquier modelo de IA (Claude, ChatGPT, Midjourney, DALL-E), consulte la guia detallada:  
+**[GUIA_PROMPTS_DIAGRAMAS_IA.md](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/GUIA_PROMPTS_DIAGRAMAS_IA.md)**
+
+---
+
+## 8. Documentacion PDF
 
 El manual operativo completo con diagramas y protocolo de campo impreso se encuentra en la raiz del repositorio:  
 **`Manual_Operativo_Telemetria_GoPro_DJI.pdf`**
