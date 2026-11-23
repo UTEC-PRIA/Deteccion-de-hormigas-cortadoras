@@ -2,7 +2,7 @@
 
 Pestaña **Plan de vuelo** del dashboard. Diseña, valida, carga y verifica misiones en la Pixhawk.
 
-> **Estado:** probado con un dron simulado (`tests/simular_plan.py`) y en Firefox.
+> **Estado:** probado con un dron simulado (`tests/simular_plan.py`), en ArduCopter SITL 4.0.7 y en Firefox.
 > **Aún no probado con la aeronave real.** Haga las pruebas de la sección 5 antes de usarlo.
 
 ## 1. Herramientas
@@ -52,3 +52,19 @@ muévala a otro y vuelva. LAND desciende donde esté: para frenar use primero LO
 - `FS_GCS_ENABLE = 0`: sin radio, el dron **sigue** la misión. `FENCE_ENABLE = 0`: sin geocerca.
 - Voltaje ruidoso (10,94-12,27 V en el vuelo 02): una lectura falsa puede disparar RTL.
 - Altura: 2,3 m de diferencia entre inicio y fin del vuelo 02.
+
+## Despegue sincronizado
+Con "Punto 1 = posición inicial del dron", *Revisar dron* coloca el punto D en el GPS del dron y *Cargar y verificar* lo actualiza con la
+posición del momento. Si mueve el dron después de cargar, cargue de nuevo. El despegue sigue siendo manual.
+
+## Pruebas en ArduCopter simulado (SITL), 23/11/2026
+`tests/sitl_f450.py` carga el plan, despega en LOITER, vuela AUTO, pausa, reanuda, hace RTL y aterriza. No usa el dron.
+
+| Firmware | WPNAV_SPEED | Resultado | Velocidad antes / después de pausar (plan 0,4) |
+|---|---|---|---|
+| 4.0.7 | 40 | Completa; aterrizó a 0,2 m | 0,35 / 0,34 m/s (máx. 0,50) |
+| 4.0.7 | 100 | Completa; aterrizó a 0,2 m | 0,35 / **0,95** m/s |
+| 4.7.3 | 40 | **Carga rechazada**: ese firmware no es compatible con esta versión | - |
+
+**Poner `WPNAV_SPEED = 40`:** al volver a AUTO el autopiloto usa ese valor en lugar de la velocidad del plan.
+SITL no reproduce viento, sensores, batería ni la radio reales: falta la prueba con la aeronave.

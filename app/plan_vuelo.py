@@ -31,10 +31,10 @@ def normalizar(d):
     try:
         wps = [{"lat": float(w["lat"]), "lon": float(w["lon"]), "alt": float(w["alt"]),
                 "espera": float(w.get("espera", 0))} for w in d["wps"]]
-        p = {"nombre": str(d.get("nombre", "Plan")), "vel": float(d["vel"]), "fin": d["fin"], "wps": wps, "dron": str(d.get("dron") or "f450")}
+        p = {"nombre": str(d.get("nombre", "Plan")), "vel": float(d["vel"]), "fin": d["fin"], "wps": wps, "dron": str(d.get("dron") or "f450"), "despegue": d.get("despegue") is True}
     except (KeyError, TypeError, ValueError):
         raise HTTPException(400, "Plan con datos invalidos")
-    if p["dron"] not in drones.PERFILES: raise HTTPException(400, "Tipo de dron desconocido")
+    if p["dron"] not in drones.PERFILES or not drones.visible(p["dron"]): raise HTTPException(400, "Tipo de dron desconocido")
     nums = [p["vel"]] + [w[k] for w in wps for k in w]
     if not all(math.isfinite(x) for x in nums):
         raise HTTPException(400, "Plan con numeros invalidos")
@@ -236,6 +236,7 @@ def estado_dron(x_hormigas: str = Header("")):
     if pr.get("FS_THR_ENABLE") != 1: av.append("Failsafe de control: no esta en 'RTL siempre' (o no se leyo).")
     if pr.get("FS_GCS_ENABLE") == 0: av.append("Si se pierde la radio 915, el dron SIGUE la mision.")
     if pr.get("FENCE_ENABLE") == 0: av.append("Geocerca desactivada.")
+    if pr.get("WPNAV_SPEED", 0) > 41: av.append(f"WPNAV_SPEED = {pr['WPNAV_SPEED']:.0f} cm/s: si pausa y vuelve a AUTO, vuela a esa velocidad y no a la del plan (medido en SITL). Recomendado: 40.")
     faltan = [p for p in PARAMS if p not in pr and p != "RTL_SPEED"]   # no existe en firmware antiguo
     if faltan: av.append("Parametros sin leer: " + ", ".join(faltan))
     g, s = L.get("GPS_RAW_INT"), L.get("SYS_STATUS")
@@ -258,6 +259,7 @@ def cargar(d: dict, x_hormigas: str = Header("")):
             e = _chequeo(L) + _velocidades(pr)
             if not e:
                 g = L["GLOBAL_POSITION_INT"]; home = (g.lat / 1e7, g.lon / 1e7, g.alt / 1000)
+                if p["despegue"] and p["wps"]: p["wps"][0].update(lat=home[0], lon=home[1])    # punto 1 = posicion del dron
                 e = validar(p, home[:2])["errores"]
             if e: return {"exito": False, "errores": e}
             its = items(p, home); cargado["id"] = None; _subir(c, its); _verificar(c, its)
@@ -267,7 +269,7 @@ def cargar(d: dict, x_hormigas: str = Header("")):
         finally: c.close()
     finally: PUERTO_LOCK.release()
     cargado.update(id=_id(p), plan=p, hora=time.strftime("%H:%M:%S"))
-    return {"exito": True, "items": len(its), "id": cargado["id"]}
+    return {"exito": True, "items": len(its), "id": cargado["id"], "wps": p["wps"], "home": home[:2]}
 
 @router.get("/api/plan/vivo")
 def vivo():

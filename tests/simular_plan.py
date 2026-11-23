@@ -38,6 +38,7 @@ c('estado',lambda:pv.estado_dron('1'))
 S['arm']=True;c('armado',lambda:pv.cargar(p(),'1'));S['arm']=False;S['rc']=0;c('sin rc',lambda:pv.cargar(p(),'1'));S['rc']=8
 S['par']=500.0;c('WPNAV alto',lambda:pv.cargar(p(),'1'));S['par']=1.0
 S['corrupt']=True;c('relectura distinta',lambda:pv.cargar(p(),'1'));S['corrupt']=False;S['drop']=2;c('con perdidas',lambda:pv.cargar(p(),'1'))
+print('despegue sincronizado',pv.cargar(p(despegue=True,wps=[{'lat':-32.30851,'lon':-53.80721,'alt':8}]+A[1:]),'1')['wps'][0]);pv.cargar(p(),'1')
 print([(i.command,i.x,i.y,i.z) for i in S['items']])
 c('AUTO sin grabar',lambda:pv.modo(p(modo='AUTO'),'1'))
 print(w.start_flight({'mision':'s','puerto':U})['exito']);time.sleep(2)

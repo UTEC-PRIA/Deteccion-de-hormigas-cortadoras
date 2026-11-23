@@ -7,7 +7,7 @@ import sys, os, csv, json, glob, subprocess
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
-import re
+import re, bisect
 import rutas
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -32,7 +32,7 @@ def leer_fotos(carpeta):
     if not glob.glob(os.path.join(d, "*.[jJ][pP][gG]")):
         return []
     res = subprocess.run(["exiftool", "-json", "-n", "-q", "-ext", "jpg", "-GPSLatitude", "-GPSLongitude",
-                          "-RelativeAltitude", "-FlightYawDegree", "-DateTimeOriginal", d],
+                          "-RelativeAltitude", "-FlightYawDegree", "-DateTimeOriginal", "-SubSecTimeOriginal", d],
                          capture_output=True, text=True)
     if not res.stdout.strip():
         raise RuntimeError("exiftool no devolvio datos: " + res.stderr)
@@ -40,7 +40,7 @@ def leer_fotos(carpeta):
     for x in json.loads(res.stdout):
         num = lambda k: (float(x[k]) if x.get(k) not in (None, "") else None)
         salida.append({"n": os.path.basename(x["SourceFile"]), "lat": num("GPSLatitude"), "lon": num("GPSLongitude"),
-                       "alt": num("RelativeAltitude"), "yaw": num("FlightYawDegree"), "f": x.get("DateTimeOriginal", "")})
+                       "alt": num("RelativeAltitude"), "yaw": num("FlightYawDegree"), "f": x.get("DateTimeOriginal", ""), "ss": float("0." + str(x.get("SubSecTimeOriginal", "0")))})
     salida.sort(key=lambda q: q["n"])
     return salida
 
@@ -72,7 +72,7 @@ footer{padding:8px 16px;display:flex;gap:12px;align-items:center;border-top:1px 
 <label>Color <select id="col"><option value="3">Altura (m)</option><option value="4">Velocidad (m/s)</option><option value="5">Voltaje (V)</option></select></label>
 <label><input type="checkbox" id="vf" checked> Fotos</label><span id="leg"><em id="lmin"></em> <i></i> <em id="lmax"></em></span></header>
 <main><div id="map"></div><aside><div id="foto"><p>Pulsa Reproducir o haz clic en cualquier punto de la trayectoria.</p></div><div id="avisos"></div>
-<h4>Altura relativa (m)</h4><canvas id="c3" width="640" height="180"></canvas><h4>Voltaje (V)</h4><canvas id="c5" width="640" height="180"></canvas>
+<h4>Altura relativa (m)</h4><canvas id="c3" width="640" height="180"></canvas><h4 id="h5">Voltaje (V)</h4><canvas id="c5" width="640" height="180"></canvas>
 <details><summary id="sg"></summary><div id="lst"></div></details></aside></main>
 <footer><button id="pl">▶ Reproducir</button><select id="ve"><option>1</option><option selected>2</option><option>5</option><option>10</option></select>x<input type="range" id="sl" min="0" value="0"><span id="st"></span></footer>
 <script>/*JS*/</script><script>
@@ -87,21 +87,23 @@ L.control.layers({'Satélite':sat,'Calles':osm,'Sin fondo':L.layerGroup()},{'Tra
 function pinta(){tr.clearLayers();const k=+$('col').value,v=T.map(p=>p[k]),a=v.reduce((x,y)=>Math.min(x,y)),b=v.reduce((x,y)=>Math.max(x,y));
 $('lmin').textContent=a.toFixed(1);$('lmax').textContent=b.toFixed(1);
 for(let i=1;i<T.length;i++){const h=240-240*(b>a?(T[i][k]-a)/(b-a):.5);L.polyline([[T[i-1][1],T[i-1][2]],[T[i][1],T[i][2]]],{color:`hsl(${h},85%,48%)`,weight:4,interactive:false,dashArray:T[i][0]-T[i-1][0]>2?'4 6':null}).addTo(tr)}}
+if(D.dji){$('c5').hidden=$('h5').hidden=true;$('c5').style.display='none';$('col').options[2].remove();if(D.hay&&location.protocol.startsWith('http')){const a=document.createElement('a');a.style.color='#7dd3fc';a.href=D.est?'?gps=grabado':'?';a.textContent=D.est?'Ver GPS grabado':'Ver recorrido estimado';document.querySelector('header').append(a)}}
 let elige=ver;
 function ver(p){const c=$('foto');c.replaceChildren();const im=new Image();im.src='miniaturas/'+encodeURIComponent(p.n);im.title='Abrir original';im.onclick=()=>open('fotos/'+encodeURIComponent(p.n));
-const d=document.createElement('p');d.textContent=`${p.n} | ${p.f} | `+(p.lat===null?'SIN GPS':`${p.lat.toFixed(7)}, ${p.lon.toFixed(7)} | altura ${p.alt} m | rumbo ${p.yaw}°`);c.append(im,d)}
+const d=document.createElement('p');d.textContent=`${p.n} | ${p.f} | `+(p.lat===null?'SIN GPS':`${p.lat.toFixed(7)}, ${p.lon.toFixed(7)} | altura ${p.alt} m`+(p.yaw===null?"":` | rumbo ${p.yaw}°`));c.append(im,d)}
 G.forEach(p=>L.circleMarker([p.lat,p.lon],{radius:5,color:'#fff',weight:1,fillColor:'#f97316',fillOpacity:.9,bubblingMouseEvents:false}).bindTooltip(p.n).on('click',()=>elige(p)).addTo(fo));
 N.forEach(p=>{const b=document.createElement('button');b.textContent=p.n;b.onclick=()=>ver(p);$('lst').append(b)});
 $('sg').textContent='Fotos sin GPS: '+N.length;$('vf').onchange=e=>e.target.checked?fo.addTo(map):fo.remove();$('col').onchange=pinta;
 const av=t=>{const d=document.createElement('div');d.className='av';d.textContent=t;$('avisos').append(d)};
+if(D.est)av('Recorrido estimado: el video graba la posición redondeada a unos 11 m y se reconstruye con la distancia al despegue y la velocidad. Los tags conservan el GPS grabado.');
 if(!F.length)av('Esta misión todavía no tiene fotos. Vuelve a generar el visor cuando termine el procesamiento.');if(N.length)av(N.length+' fotos sin GPS (no aparecen en el mapa).');
 function graf(id,k){const c=$(id),x=c.getContext('2d'),v=T.map(p=>p[k]),a=v.reduce((m,n)=>Math.min(m,n)),b=v.reduce((m,n)=>Math.max(m,n));x.strokeStyle='#1a5f7a';x.lineWidth=2;x.beginPath();
 v.forEach((y,i)=>{const X=(T[i][0]-T[0][0])/Math.max(1,T[T.length-1][0]-T[0][0])*640,Y=165-(y-a)/((b-a)||1)*150;i?x.lineTo(X,Y):x.moveTo(X,Y)});x.stroke();x.fillStyle='#475569';x.font='20px sans-serif';x.fillText(b.toFixed(1),4,20);x.fillText(a.toFixed(1),4,176)}
-if(T.length){pinta();graf('c3',3);graf('c5',5);let d=0;for(let i=1;i<T.length;i++)d+=map.distance([T[i-1][1],T[i-1][2]],[T[i][1],T[i][2]]);
+if(T.length){pinta();graf('c3',3);if(!D.dji)graf('c5',5);let d=0;for(let i=1;i<T.length;i++)d+=map.distance([T[i-1][1],T[i-1][2]],[T[i][1],T[i][2]]);
 $('res').textContent=`${((T[T.length-1][0]-T[0][0])/60).toFixed(1)} min | ${d.toFixed(0)} m de recorrido | ${T.length} registros | ${G.length}/${F.length} fotos con GPS`;
 map.fitBounds(L.latLngBounds(T.map(p=>[p[1],p[2]])).pad(.15));const mk=L.circleMarker([T[0][1],T[0][2]],{radius:9,color:'#0ea5e9',weight:4,fillOpacity:.2}).addTo(map);
-$('sl').max=T.length-1;const mv=()=>{const p=T[+$('sl').value];mk.setLatLng([p[1],p[2]]);$('st').textContent=`${new Date(p[0]*1000).toLocaleTimeString()} | ${p[7]} | ${p[3].toFixed(1)} m | ${p[4].toFixed(1)} m/s | ${p[5].toFixed(2)} V | ${p[6]} sats`};$('sl').oninput=()=>{mv();sinc()};mv();
-const S=F.map(p=>({p,t:new Date(p.f.replace(/^(\d+):(\d+):(\d+) /,'$1-$2-$3T')).getTime()/1000})).filter(o=>o.t&&o.p.lat!==null).sort((a,b)=>a.t-b.t);let ult=null;
+$('sl').max=T.length-1;const mv=()=>{const p=T[+$('sl').value];mk.setLatLng([p[1],p[2]]);$('st').textContent=`${new Date(p[0]*1000).toLocaleTimeString()} | ${p[7]} | ${p[3].toFixed(1)} m | ${p[4].toFixed(1)} m/s`+(D.dji?'':` | ${p[5].toFixed(2)} V | ${p[6]} sats`)};$('sl').oninput=()=>{mv();sinc()};mv();
+const S=F.map(p=>({p,t:new Date(p.f.replace(/^(\d+):(\d+):(\d+) /,'$1-$2-$3T')).getTime()/1000+(p.ss||0)})).filter(o=>o.t&&o.p.lat!==null).sort((a,b)=>a.t-b.t);let ult=null;
 function sinc(){const t=T[+$('sl').value][0];let b=null;for(const o of S)if(!b||Math.abs(o.t-t)<Math.abs(b.t-t))b=o;if(b&&Math.abs(b.t-t)<=3&&b.p!==ult){ult=b.p;ver(b.p)}}
 const ht=o=>{let b=0;for(let i=1;i<T.length;i++)if(Math.abs(T[i][0]-o)<Math.abs(T[b][0]-o))b=i;return b};
 function cercanas(lat,lon,p){const c=S.map(o=>({o,d:map.distance([lat,lon],[o.p.lat,o.p.lon])})).filter(q=>q.d<=3&&q.o.p!==p).sort((a,b)=>a.d-b.d).slice(0,8);
@@ -115,9 +117,33 @@ run=setInterval(()=>{tv+=.25*+$('ve').value;let i=+$('sl').value;while(i<T.lengt
 }else map.setView([0,0],2);
 </script></body></html>"""
 
-def construir(carpeta, fotos):
-    tel = leer_telemetria(carpeta)
-    datos = json.dumps({"nombre": os.path.basename(carpeta), "t": tel, "f": fotos}).replace("<", "\\u003c")
+def aplicar_estimada(carpeta, tel, fotos):
+    """Cambia la posicion redondeada del video por la estimada, solo para dibujar. Las fotos con GPS fino no se tocan."""
+    try:
+        with open(os.path.join(carpeta, "estimada.json")) as f: E = sorted(json.load(f))
+    except (OSError, ValueError): return tel, fotos, False
+    if not E: return tel, fotos, False
+    ts = [e[0] for e in E]
+    def en(t):
+        i = bisect.bisect_left(ts, t); c = [j for j in (i - 1, i) if 0 <= j < len(ts)]
+        j = min(c, key=lambda j: abs(ts[j] - t)); return E[j] if abs(ts[j] - t) <= 1.01 else None
+    tel2 = []
+    for r in tel:
+        e = en(r[0]) if r[7] == "VIDEO" else None
+        tel2.append([r[0], e[1], e[2], *r[3:]] if e else r)
+    fo2 = []
+    for p in fotos:
+        e = None
+        if re.search(r"_\d{5}s\.JPG$", p["n"]) and p["lat"] is not None:
+            try: e = en(datetime.strptime(p["f"], "%Y:%m:%d %H:%M:%S").astimezone().timestamp() + p.get("ss", 0))
+            except ValueError: pass
+        fo2.append({**p, "lat": e[1], "lon": e[2]} if e else p)
+    return tel2, fo2, True
+
+def construir(carpeta, fotos, grabado=False):
+    tel = leer_telemetria(carpeta); hay = os.path.exists(os.path.join(carpeta, "estimada.json")); est = False
+    if not grabado: tel, fotos, est = aplicar_estimada(carpeta, tel, fotos)
+    datos = json.dumps({"nombre": os.path.basename(carpeta), "t": tel, "f": fotos, "est": est, "hay": hay, "dji": os.path.exists(os.path.join(carpeta, "dron.json"))}).replace("<", "\\u003c")
     lee = lambda n: open(os.path.join(BASE, "static", "leaflet", n), encoding="utf-8").read()
     return tel, HTML.replace("/*CSS*/", lee("leaflet.css")).replace("/*JS*/", lee("leaflet.js")).replace("/*DATOS*/", datos)
 
@@ -150,6 +176,12 @@ def _fotos(m):
 def api_vuelos():
     return [os.path.basename(c) for c in rutas.carpetas()]
 
+@router.get("/api/vuelos_grupos")
+def api_grupos():
+    g = {}
+    for c in rutas.carpetas(): g.setdefault(os.path.basename(os.path.dirname(c)), []).append(os.path.basename(c))
+    return g
+
 @router.get("/api/vuelos/{m}/fotos")
 def api_fotos(m: str):
     return {"carpeta": _carpeta(m), "fotos": _fotos(m)}
@@ -164,8 +196,8 @@ def api_tags(m: str, n: str):
     return t
 
 @router.get("/vuelos/{m}/visor.html", response_class=HTMLResponse)
-def ver_visor(m: str):
-    return construir(_carpeta(m), _fotos(m))[1]
+def ver_visor(m: str, gps: str = ""):
+    return construir(_carpeta(m), _fotos(m), gps == "grabado")[1]
 
 @router.get("/vuelos/{m}/fotos/{n}")
 def ver_foto(m: str, n: str):

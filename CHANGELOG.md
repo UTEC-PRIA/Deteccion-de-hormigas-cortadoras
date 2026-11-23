@@ -2,6 +2,9 @@
 
 ## Noviembre de 2026
 ### Nuevo
+- `tests/sitl_f450.py`: vuela el plan en ArduCopter simulado.
+- Pestaña Vuelos DJI: carga por vuelos y mapa con recorrido estimado. Waypoints DJI ocultos.
+- Plan de vuelo: el punto 1 se sincroniza con la posición del dron al revisar y al cargar.
 - Repositorio ordenado en carpetas: ver `docs/ESTRUCTURA.md`. Los vuelos viejos en `vuelos/` se migran al arrancar.
 - 8 vuelos del Mini 2 SE (telemetría, visor y miniaturas).
 - `drones.py` y pestaña Drones DJI: perfiles intercambiables, importación de la cámara propia, tramos por batería, KMZ y reanudación. Ver `docs/DRONES_DJI.md`.

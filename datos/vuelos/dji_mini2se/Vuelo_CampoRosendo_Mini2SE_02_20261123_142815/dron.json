@@ -6,5 +6,10 @@
   "DCIM/100MEDIA/DJI_0052.MP4",
   "DCIM/100MEDIA/DJI_0053.MP4"
  ],
- "precision_video_m": 11
+ "precision_video_m": 11,
+ "claves": [
+  "DJI_0051.MP4|1795454895",
+  "DJI_0052.MP4|1795454921",
+  "DJI_0053.MP4|1795455038"
+ ]
 }

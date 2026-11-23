@@ -42,10 +42,10 @@
   async function ir(i) {
     pans.forEach((p, k) => p.style.display = k === i ? 'block' : 'none'); [...nav.children].forEach((b, k) => b.classList.toggle('on', k === i));
     location.hash = ['', 'mapa', 'imagenes', 'plan', 'drones'][i]; if (!i) return; if (i === 3) { if (!fp.src) fp.src = '/static/plan.html'; return; } if (i === 4) { if (!fd.src) fd.src = '/static/drones.html'; return; }
-    const v = await (await fetch('/api/vuelos')).json(), act = sels[i - 1].value;
-    sels.forEach(s => { s.replaceChildren(...v.map(n => $('option', { value: n, textContent: n }))); s.value = v.includes(act) ? act : v[0] || ''; });
+    const g = await (await fetch('/api/vuelos_grupos')).json(), NG = { f450_gopro: 'F450 + GoPro', dji_mini2se: 'DJI Mini 2 SE' }, v = Object.values(g).flat(), act = sels[i - 1].value;
+    sels.forEach(s => { s.replaceChildren(...Object.entries(g).map(([k, l]) => $('optgroup', { label: NG[k] || k }, ...l.map(n => $('option', { value: n, textContent: n }))))); s.value = v.includes(act) ? act : v[0] || ''; });
     if (sels[i - 1].value) carga[i](sels[i - 1].value);
   }
-  ['Control', 'Vuelos y mapa', 'Imágenes y tags', 'Plan de vuelo', 'Drones DJI'].forEach((t, i) => nav.append($('button', { textContent: t, onclick: () => ir(i) })));
+  ['Control', 'Vuelos y mapa', 'Imágenes y tags', 'Plan de vuelo', 'Vuelos DJI'].forEach((t, i) => nav.append($('button', { textContent: t, onclick: () => ir(i) })));
   ir(Math.max(0, ['', '#mapa', '#imagenes', '#plan', '#drones'].indexOf(location.hash)));
 })();

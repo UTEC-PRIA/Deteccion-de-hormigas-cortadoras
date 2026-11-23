@@ -10,3 +10,5 @@ venv/
 *.tmp
 *.part
 datos/planes/.progreso.json
+datos/entrada_dji/*
+!datos/entrada_dji/.gitkeep

@@ -12,6 +12,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 VUELOS, PLANES = rutas.VUELOS, rutas.PLANES
 PROGRESO = os.path.join(PLANES, ".progreso.json")
 router = APIRouter()
+NAV_DJI = False      # navegacion por waypoints en DJI: oculta hasta que este probada
+ENTRADA = os.path.join(rutas.DATOS, "entrada_dji")      # para copiar archivos a mano, sin el dron
+OMITIDOS = os.path.join(VUELOS, ".omitidos.json")
 _DJI = {"alt_min": 5.0, "alt_max": 60.0, "vel_min": 0.5, "vel_ref": 2.0, "vel_max": 8.0, "radio_max": 500.0,
         "tramo_max": 300.0, "wp_max": 200, "min_max": 180.0}
 PERFILES = {
@@ -22,6 +25,8 @@ PERFILES = {
     "mini5pro": {"nombre": "DJI Mini 5 Pro", "carga": "kmz", "camara": "propia", "bateria_min": 22, "vels": [1, 2, 3, 5], "lim": _DJI,
                  "nota": "El plan se exporta en KMZ y se vuela con DJI Fly."},
 }
+
+def visible(k): return NAV_DJI or PERFILES[k]["carga"] == "mavlink"
 
 def limites(dron, base):
     return {**base, **PERFILES[dron].get("lim", {})}
@@ -43,7 +48,11 @@ def usb_dji():
     return r
 
 def tarjetas():
-    return sorted({os.path.dirname(os.path.dirname(p)) for pat in ("/media/*/*/DCIM/*MEDIA", "/media/*/*/DCIM/DJI*") for p in glob.glob(pat)})
+    r = sorted({os.path.dirname(os.path.dirname(p)) for pat in ("/media/*/*/DCIM/*MEDIA", "/media/*/*/DCIM/DJI*") for p in glob.glob(pat)})
+    return r + ([ENTRADA] if _archivos(ENTRADA) else [])
+
+def _archivos(t):
+    return sorted({f for pat in ("DCIM/*/*", "*") for f in glob.glob(os.path.join(t, pat)) if f.lower().endswith((".mp4", ".jpg"))})
 
 def _tarjeta(t):
     if t not in tarjetas(): raise HTTPException(404, "No se encuentra la tarjeta del dron.")
@@ -57,7 +66,7 @@ def _desfase():
     return datetime.now().astimezone().utcoffset().total_seconds() / 3600
 
 def listar_medios(t):
-    fs = [f for e in ("MP4", "JPG", "mp4", "jpg") for f in glob.glob(os.path.join(t, "DCIM", "*", "*." + e))]
+    fs = _archivos(t)
     if not fs: return []
     q = subprocess.run(["exiftool", "-api", "largefilesupport=1", "-json", "-n", "-q", "-Model", "-CreateDate", "-DateTimeOriginal",
                         "-Duration", "-GPSLatitude", "-GPSLongitude", *fs], capture_output=True, text=True)
@@ -67,7 +76,7 @@ def listar_medios(t):
         try: h = _utc(x, v, _desfase())
         except (KeyError, ValueError): continue
         r.append({"archivo": os.path.relpath(x["SourceFile"], t), "tipo": "video" if v else "foto", "utc": h.timestamp(),
-                  "dur": x.get("Duration"), "mb": round(os.path.getsize(x["SourceFile"]) / 1e6, 1), "modelo": x.get("Model", "")})
+                  "dur": x.get("Duration"), "mb": round(os.path.getsize(x["SourceFile"]) / 1e6, 1), "modelo": x.get("Model", ""), "clave": f"{os.path.basename(x['SourceFile'])}|{int(h.timestamp())}"})
     return sorted(r, key=lambda z: z["utc"])
 
 MODELOS = {"FC7503": "mini2se"}
@@ -79,6 +88,8 @@ def telemetria_video(ruta):
     """Subtitulos que el dron graba dentro del MP4, uno por segundo. Coordenadas con 4 decimales (unos 11 m)."""
     q = subprocess.run(["exiftool", "-api", "largefilesupport=1", "-ee", "-n", "-q", "-p", "$SampleTime|$Text", ruta], capture_output=True, text=True)
     r = []
+    srt = next((os.path.splitext(ruta)[0] + e for e in (".SRT", ".srt") if os.path.exists(os.path.splitext(ruta)[0] + e)), None)
+    if srt: return telemetria_srt(srt)
     for l in q.stdout.splitlines():
         a, _, txt = l.partition("|"); m = SUB.search(txt)
         if not m: continue
@@ -87,6 +98,57 @@ def telemetria_video(ruta):
                         "cam": (lambda c: c and [float(g) for g in c.groups()])(CAM.search(txt))})
         except ValueError: continue
     return r
+
+def telemetria_srt(ruta):
+    """Subtitulos aparte de otros DJI: [latitude: x] [longitude: y] [rel_alt: z abs_alt: w]. Un dato por segundo."""
+    with open(ruta, encoding="utf-8", errors="replace") as f: bloques = re.split(r"\n\s*\n", f.read())
+    r = []
+    for b in bloques:
+        h = re.search(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->", b); la = re.search(r"latitude\s*:\s*" + NUM, b); lo = re.search(r"longt?itude\s*:\s*" + NUM, b)
+        if not (h and la and lo): continue
+        s = int(h[1]) * 3600 + int(h[2]) * 60 + int(h[3]) + int(h[4]) / 1000
+        if r and s - r[-1]["s"] < 0.95: continue
+        al = re.search(r"rel_alt\s*:\s*" + NUM, b); x, y = float(la[1]), float(lo[1])
+        r.append({"s": s, "lat": x, "lon": y, "alt": float(al[1]) if al else 0.0, "vel": 0.0, "casa": None, "gps": bool(x or y), "cam": None})
+    for a, b in zip(r, r[1:]):
+        if a["gps"] and b["gps"]: b["vel"] = round(dist((a["lat"], a["lon"]), (b["lat"], b["lon"])) / max(b["s"] - a["s"], .1), 2)
+    return r
+
+def en_tierra(tel): return bool(tel) and max(p["alt"] for p in tel) < 0.5 and max(p["vel"] for p in tel) < 0.3
+
+def _json(r, d):
+    try:
+        with open(r, encoding="utf-8") as f: return json.load(f)
+    except (OSError, ValueError): return d
+
+def importados():
+    s = set(_json(OMITIDOS, []))
+    for c in rutas.carpetas(): s |= set(_json(os.path.join(c, "dron.json"), {}).get("claves", []))
+    return s
+
+def agrupar(med, pausa=300):
+    """Un vuelo nuevo cuando pasan mas de 5 min entre archivos."""
+    g, fin = [], None
+    for m in med:
+        if fin is None or m["utc"] - fin > pausa: g.append([])
+        g[-1].append(m); fin = max(fin or 0, m["utc"] + (m["dur"] or 0))
+    ya = importados()
+    return [{"inicio": x[0]["utc"], "videos": sum(m["tipo"] == "video" for m in x), "fotos": sum(m["tipo"] == "foto" for m in x),
+             "mb": round(sum(m["mb"] for m in x)), "seg": round(sum(m["dur"] or 0 for m in x)), "archivos": [m["archivo"] for m in x],
+             "nuevos": [m["archivo"] for m in x if m["clave"] not in ya]} for x in g]
+
+def guardar_estimada(carpeta, por_video):
+    """por_video: [(utc inicio, tel)]. El GPS grabado queda en telemetria.csv y en los tags."""
+    import trayectoria
+    e = []
+    for u, tel in por_video:
+        tel = [p for p in tel if p["gps"]]
+        if not tel or any(p["casa"] is None for p in tel) or any(round(p["lat"], 4) != p["lat"] or round(p["lon"], 4) != p["lon"] for p in tel): continue
+        try: r = trayectoria.estimar(tel)
+        except Exception as x: print("trayectoria:", x); r = None
+        if r: e += [[round(u.timestamp() + p["s"], 2), round(a, 7), round(b, 7)] for p, (a, b) in zip(tel, r)]
+    with open(os.path.join(carpeta, "estimada.json"), "w") as f: json.dump(e, f)
+    return len(e)
 
 CAB = ["timestamp_utc", "latitud", "longitud", "altitud_msl", "altitud_relativa", "alabeo_roll", "cabeceo_pitch", "rumbo_yaw",
        "velocidad_ms", "satelites", "voltaje_bateria", "modo_vuelo"]
@@ -141,7 +203,8 @@ def _importar(t, arch, nombre, cada, copiar):
         if os.path.exists(os.path.join(carpeta, "telemetria.csv")): raise RuntimeError("Ese vuelo ya fue importado: " + os.path.basename(carpeta))
         fd, vd = os.path.join(carpeta, "fotos"), os.path.join(carpeta, "video")
         os.makedirs(fd, exist_ok=True); os.makedirs(vd, exist_ok=True)
-        filas, sin, nf, ng = [], 0, 0, 0
+        filas, sin, nf, ng, vids, fuera = [], 0, 0, 0, [], []
+        if shutil.disk_usage(VUELOS).free < 2.2e6 * sum(m["mb"] for m in med): raise RuntimeError("No hay espacio suficiente en el disco.")
         for k, m in enumerate(med):
             tarea.update(pct=int(100 * k / len(med)), msg=f"{m['archivo']} ({k + 1}/{len(med)})")
             src = os.path.join(t, m["archivo"]); u = datetime.fromtimestamp(m["utc"], timezone.utc)
@@ -154,6 +217,8 @@ def _importar(t, arch, nombre, cada, copiar):
                     ng += 1; filas.append([u, q["GPSLatitude"], q["GPSLongitude"], float(q.get("GPSAltitude", 0)), float(q.get("RelativeAltitude", 0)), float(q.get("FlightYawDegree", 0)), 0, "FOTO"])
                 continue
             tel = telemetria_video(src)
+            if en_tierra(tel): fuera.append(m["clave"]); continue
+            vids.append((u, tel))
             for p in tel:
                 if p["gps"]: filas.append([u + timedelta(seconds=p["s"]), p["lat"], p["lon"], 0, p["alt"], 0, p["vel"], "VIDEO"])
                 else: sin += 1
@@ -163,18 +228,33 @@ def _importar(t, arch, nombre, cada, copiar):
                 dst = os.path.join(vd, os.path.basename(src))
                 if not (os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src)):
                     shutil.copy2(src, dst + ".part"); os.replace(dst + ".part", dst)
+        if fuera:
+            with open(OMITIDOS, "w") as f: json.dump(sorted(set(_json(OMITIDOS, [])) | set(fuera)), f)
+        if not nf and not filas and not vids:
+            shutil.rmtree(carpeta, ignore_errors=True); tarea.update(pct=100, msg="Sin vuelo: video en tierra omitido."); return
+        tarea["msg"] = "Calculando el recorrido..."; guardar_estimada(carpeta, vids)
         filas.sort(key=lambda f: f[0])
         with open(os.path.join(carpeta, "telemetria.csv"), "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f); w.writerow(CAB)
             for h, la, lo, am, al, yw, v, o in filas:
                 w.writerow([h.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], f"{la:.7f}", f"{lo:.7f}", f"{am:.2f}", f"{al:.2f}", "0.00", "0.00", f"{yw:.2f}", f"{v:.2f}", 0, "0.00", o])
         with open(os.path.join(carpeta, "dron.json"), "w") as f:
-            json.dump({"dron": MODELOS.get(med[0]["modelo"], med[0]["modelo"]), "camara": med[0]["modelo"], "archivos": [m["archivo"] for m in med],
+            json.dump({"dron": MODELOS.get(med[0]["modelo"], med[0]["modelo"]), "camara": med[0]["modelo"], "archivos": [m["archivo"] for m in med], "claves": [m["clave"] for m in med],
                        "precision_video_m": 11}, f, indent=1)
         tarea.update(vuelo=os.path.basename(carpeta), pct=100, msg=f"{len(filas)} posiciones, {nf} imagenes ({ng} con GPS), {sin} segundos de video sin GPS.")
     except Exception as e:
         tarea.update(error=str(e), msg="Error: " + str(e))
-    finally: tarea["activa"] = False
+    finally:
+        if not tarea.get("lote"): tarea["activa"] = False
+
+def _lote(t, grupos, nombre, cada, copiar):
+    tarea["lote"] = True; ok, mal = [], []
+    try:
+        for i, a in enumerate(grupos, 1):
+            tarea.update(error=None, vuelo=None); _importar(t, a, f"{nombre}_{i:02d}" if len(grupos) > 1 else nombre, cada, copiar)
+            (mal if tarea["error"] else ok).append(tarea["error"] or tarea["vuelo"] or tarea["msg"])
+        tarea.update(msg=f"{len(ok)} listos: " + ", ".join(ok) + ("" if not mal else " | Errores: " + "; ".join(mal)), error="; ".join(mal) or None, vuelo=None)
+    finally: tarea.update(lote=False, activa=False)
 
 # ---------- plan ----------
 def _mins(w, vel, casa):
@@ -243,6 +323,7 @@ def _casa(d, p):
     return c
 
 def _preparar(d):
+    if not NAV_DJI: raise HTTPException(404)
     import plan_vuelo as pv
     p = pv.normalizar(d)
     if not p["wps"]: raise HTTPException(400, "El plan esta vacio.")
@@ -260,13 +341,16 @@ def _guardia(x):
 @router.get("/api/drones")
 def api_drones():
     import plan_vuelo as pv
-    return {k: {**{a: b for a, b in v.items() if a != "lim"}, "lim": limites(k, pv.LIM)} for k, v in PERFILES.items()}
+    return {k: {**{a: b for a, b in v.items() if a != "lim"}, "lim": limites(k, pv.LIM)} for k, v in PERFILES.items() if visible(k)}
 
 @router.get("/api/drones/hardware")
 def api_hw(): return {"usb": usb_dji(), "tarjetas": tarjetas()}
 
 @router.get("/api/drones/medios")
 def api_medios(t: str): return listar_medios(_tarjeta(t))
+
+@router.get("/api/drones/vuelos")
+def api_grupos(t: str): return agrupar(listar_medios(_tarjeta(t)))
 
 @router.post("/api/drones/importar")
 def api_importar(d: dict, x_hormigas: str = Header("")):
@@ -275,10 +359,11 @@ def api_importar(d: dict, x_hormigas: str = Header("")):
     try: cada = float(d.get("cada", 2))
     except (TypeError, ValueError): raise HTTPException(400, "Intervalo invalido.")
     if cada != 0 and not 0.5 <= cada <= 60: raise HTTPException(400, "Intervalo: 0 (sin fotogramas) o de 0,5 a 60 s.")
-    if not isinstance(d.get("archivos"), list) or not d["archivos"]: raise HTTPException(400, "Elija al menos un archivo.")
+    g = d.get("grupos")
+    if not isinstance(g, list) or not g or not all(isinstance(x, list) and x for x in g): raise HTTPException(400, "Elija al menos un vuelo.")
     if tarea["activa"]: raise HTTPException(409, "Ya hay una importacion en curso.")
     tarea.update(activa=True, msg="Leyendo...", pct=0, vuelo=None, error=None)
-    threading.Thread(target=_importar, args=(t, d["archivos"], n, cada, d.get("copiar") is True), daemon=True).start()
+    threading.Thread(target=_lote, args=(t, g, n, cada, d.get("copiar") is True), daemon=True).start()
     return {"exito": True}
 
 @router.get("/api/drones/tarea")
@@ -336,6 +421,7 @@ def api_progreso():
 def api_cobertura(d: dict, x_hormigas: str = Header("")):
     """Ultimo waypoint alcanzado EN ORDEN segun un vuelo ya importado. Es una sugerencia: el usuario confirma."""
     _guardia(x_hormigas)
+    if not NAV_DJI: raise HTTPException(404)
     import plan_vuelo as pv, visor_vuelos as vv
     p = pv.normalizar(d); tel = vv.leer_telemetria(vv._carpeta(str(d.get("vuelo", ""))))
     r, i = (15.0 if any(q[7] == "VIDEO" for q in tel) else 5.0), 0

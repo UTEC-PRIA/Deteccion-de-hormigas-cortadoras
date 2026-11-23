@@ -1,30 +1,15 @@
-# Drones DJI
+# Vuelos DJI
+La navegación por waypoints en DJI está **oculta** (`NAV_DJI = False` en `app/drones.py`) hasta que esté probada.
 
-Pestaña **Drones DJI** (hardware e importación) y selector **Dron** en *Plan de vuelo*. Los perfiles están en `drones.py` (`PERFILES`).
+## Cargar
+1. Dron encendido por USB, o copiar MP4/JPG/SRT en `datos/entrada_dji/`.
+2. Pestaña **Vuelos DJI** → *Buscar vuelos*: agrupa por hora y marca lo ya cargado.
+3. *Cargar vuelos elegidos*. Los videos con el dron quieto en tierra se omiten. La tarjeta no se modifica.
 
-| Dron | Plan de vuelo | Estado |
-|---|---|---|
-| F450 + Pixhawk | Carga por radio y relectura | Probado con simulador |
-| Mini 5 Pro | KMZ por batería, se vuela con DJI Fly | KMZ generado; **sin probar en el dron** |
-| Mini 2 SE | Sólo guía para vuelo manual | DJI no da SDK ni waypoints |
+Probado con Mini 2 SE. Para otros modelos se lee el SRT aparte (latitude/longitude/rel_alt), probado sólo con un archivo sintético.
 
-## Importar
-Lee la tarjeta sin escribir en ella. Copia fotos intactas, extrae fotogramas y toma la posición de los subtítulos del MP4
-(1 por segundo, coordenadas de 4 decimales, unos 11 m; altura y velocidad con más detalle). El rumbo no viene en el video.
-`GimbalPitchDegree` de cada fotograma es el del inicio del video. En las fotos originales el gimbal figura 0 aunque estén inclinadas:
-no usarlo. Voltaje y satélites quedan en 0 (no disponibles). Vuelos: `datos/vuelos/dji_<modelo>/<nombre>_<fecha>/` con `dron.json`.
-
-## Cambio de batería
-- **DJI:** marcar despegue y minutos útiles; *Calcular tramos* reparte el plan con ida, regreso y 30 s de margen, y repite el último punto.
-- **Interrupción:** importar el vuelo y *Ver avance*, o indicar el WP. Es una estimación; confirmar a mano.
-- **Pixhawk:** en AUTO se guarda el WP en `datos/planes/.progreso.json`. Tras cambiar la batería: *Última misión interrumpida*,
-  *Dejar sólo lo pendiente*, cargar y verificar de nuevo. El primer punto debe quedar a 100 m o menos del despegue.
-
-## Mini 5 Pro: pasar el KMZ
-1. Crear en DJI Fly una misión cualquiera, copiar su KMZ a la PC y adjuntarlo (aporta el modelo de dron).
-2. Descargar el tramo y reemplazar con él ese archivo, conservando el nombre.
-   En Android/RC 2: `Android/data/dji.go.v5/files/waypoint/<id>/<id>.kmz`.
-3. Abrirla en DJI Fly y revisar altura, puntos y acción final antes de volar.
-
-## Pruebas
-`.venv/bin/python tests/probar_drones.py`
+## Mapa
+El Mini 2 SE graba en el video la posición con 4 decimales (unos 11 m). `app/trayectoria.py` **estima** el recorrido suave que
+respeta esa celda, la distancia al despegue y la velocidad (`estimada.json`). En un recorrido simulado el error medio bajó de 3,5 a 1,8 m;
+no hay una referencia de campo completa. *Ver GPS grabado* muestra el dato original, que es el que queda en `telemetria.csv` y en los tags.
+Las fotos JPG tienen GPS fino y no se tocan. Sin rumbo en los videos; gimbal del fotograma = el del inicio del video.
