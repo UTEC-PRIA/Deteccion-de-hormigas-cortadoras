@@ -32,4 +32,4 @@ elif ! id -nG | grep -qw dialout; then
     echo "        Ejecute: sudo usermod -aG dialout \$USER  y reinicie la sesion."
 fi
 
-exec .venv/bin/python web_dashboard.py "$@"
+exec .venv/bin/python app/web_dashboard.py "$@"

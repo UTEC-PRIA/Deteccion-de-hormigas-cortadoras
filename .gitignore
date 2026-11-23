@@ -1,11 +1,12 @@
-static/media/
+app/static/media/
 __pycache__/
 *.pyc
 misiones/
-vuelos/*/video/
-vuelos/*/fotos/
+datos/vuelos/*/*/video/
+datos/vuelos/*/*/fotos/
 registros_vuelo/
 venv/
 .venv/
 *.tmp
 *.part
+datos/planes/.progreso.json

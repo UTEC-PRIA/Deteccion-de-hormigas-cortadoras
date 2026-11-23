@@ -2,6 +2,9 @@
 
 ## Noviembre de 2026
 ### Nuevo
+- Repositorio ordenado en carpetas: ver `docs/ESTRUCTURA.md`. Los vuelos viejos en `vuelos/` se migran al arrancar.
+- 8 vuelos del Mini 2 SE (telemetría, visor y miniaturas).
+- `drones.py` y pestaña Drones DJI: perfiles intercambiables, importación de la cámara propia, tramos por batería, KMZ y reanudación. Ver `docs/DRONES_DJI.md`.
 - Pestañas en el dashboard: Control, Vuelos y mapa, Imágenes y tags, Plan de vuelo.
 - `visor_vuelos.py`: trayectoria, reproducción e imagen al hacer clic en el recorrido; galería con tags.
 - `plan_vuelo.py`: waypoints con validación, carga y relectura. Ver `docs/PLAN_DE_VUELO.md`.
@@ -10,6 +13,7 @@
 - `tests/simular_plan.py`: prueba del plan de vuelo sin hardware.
 
 ### Corregido
+- El control DJI por USB se tomaba como Pixhawk.
 - Videos de más de 4 GB: todas las fotos quedaban sin GPS (exiftool sin `largefilesupport`).
 - Hora de 1970 al sincronizar: `GPS_RAW_INT.time_usec` es tiempo desde el encendido en esta Pixhawk.
 - La cámara se sincroniza con el reloj de la PC, la misma base que la telemetría; se informa el desfase medido.

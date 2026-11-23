@@ -10,7 +10,9 @@ Las fotografias resultantes son compatibles de forma directa con software de fot
 ## Novedades
 
 El dashboard tiene cuatro pestañas: **Control**, **Vuelos y mapa**, **Imágenes y tags** y **Plan de vuelo**.
-Detalle en [CHANGELOG.md](CHANGELOG.md). Plan de vuelo: [docs/PLAN_DE_VUELO.md](docs/PLAN_DE_VUELO.md) (aún sin probar con la aeronave real).
+Carpetas: [docs/ESTRUCTURA.md](docs/ESTRUCTURA.md). DJI: [docs/guias/DRONES_DJI.md](docs/guias/DRONES_DJI.md) e [investigación del Mini 2 SE](docs/investigacion/MINI_2_SE_WAYPOINTS.md).
+
+Detalle en [CHANGELOG.md](CHANGELOG.md). Plan de vuelo: [docs/guias/PLAN_DE_VUELO.md](docs/guias/PLAN_DE_VUELO.md) (aún sin probar con la aeronave real).
 
 Los metadatos imitan el formato DJI Mini 2 SE por compatibilidad fotogramétrica: las imágenes son de la GoPro.
 
@@ -86,7 +88,7 @@ El programa abrira automaticamente su navegador en:
 2. En la pagina web, haga clic en el boton rojo **[Finalizar y Procesar]**.  
    El sistema de forma automatica:
    * Cierra el registro de vuelo (`telemetria.csv`).
-   * Descarga a la computadora solo las fotos nuevas tomadas en el vuelo (en `vuelos/NOMBRE_MISION/fotos/`).
+   * Descarga a la computadora solo las fotos nuevas tomadas en el vuelo (en `datos/vuelos/f450_gopro/NOMBRE_MISION/fotos/`).
    * Escribe las coordenadas GPS y la altura relativa en formato DJI Mini 2 SE en cada foto.
 3. Al finalizar, presione el boton **[Abrir Carpeta de Fotos]** para ver los resultados listos para fotogrametria.
 
@@ -109,11 +111,11 @@ El programa abrira automaticamente su navegador en:
 
 *Captura de Video 4K 30 FPS y Division Automatica de Fotogramas:*
 La camara se configura siempre de manera automatica en **Modo Video 4K a 30 FPS** con estabilizacion electronica HyperSmooth integrada. Al aterrizar y conectar el cable USB, el sistema:
-1. Descarga el video `.MP4` completo a `vuelos/NOMBRE_MISION/video/`.
+1. Descarga el video `.MP4` completo a `datos/vuelos/f450_gopro/NOMBRE_MISION/video/`.
 2. Divide el video en imagenes fijas de alta definicion (4K, 3840x2160) al intervalo seleccionado (1 foto/s = 90% solape, 2 fotos/s o 0.5 fotos/s).
 3. Calcula la marca de tiempo sub-segundo exacta de cada fotograma ($T_k = T_{inicio} + \frac{k}{fps}$).
 4. Interpola la posicion GPS precisa del UAV desde `telemetria.csv`.
-5. Inyecta por lotes los metadatos nativos **DJI Mini 2 SE** en cada imagen generada dentro de `vuelos/NOMBRE_MISION/fotos/`.
+5. Inyecta por lotes los metadatos nativos **DJI Mini 2 SE** en cada imagen generada dentro de `datos/vuelos/f450_gopro/NOMBRE_MISION/fotos/`.
 6. Genera el archivo de subtitulos de telemetria `.SRT` asociado al video.
 
 ---
@@ -126,19 +128,19 @@ La camara se configura siempre de manera automatica en **Modo Video 4K a 30 FPS*
 * **Estado en Espera (Standby):** [docs/imagenes/dashboard_en_espera.png](docs/imagenes/dashboard_en_espera.png)
 
 ### Ejemplos de Salida y Generador de Datos Artificiales
-En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](ejemplos_salida/vuelo_mision_campo_01/) y [datos_artificiales/mision_simulada_4k/](datos_artificiales/mision_simulada_4k/) se incluyen conjuntos de datos sinteticos para pruebas inmediatas:
+En la carpeta [datos/ejemplos/vuelo_mision_campo_01/](datos/ejemplos/vuelo_mision_campo_01/) y [datos/simulados/mision_simulada_4k/](datos/simulados/mision_simulada_4k/) se incluyen conjuntos de datos sinteticos para pruebas inmediatas:
 * `telemetria.csv`: Archivo de telemetria a 4 Hz con coordenadas, altura, actitud y voltaje de bateria 3S.
 * `video_vuelo_mision_01.MP4`: Video 4K a 30 FPS de patrulla aerea.
 * `video_vuelo_mision_01.SRT`: Archivo de subtitulos de telemetria por segundo en formato DJI.
 * `fotos/`: Fotografias aereas 4K extraidas del video con metadatos reales nativos de **DJI Mini 2 SE** inyectados (verificables mediante ExifTool o software fotogrametrico WebODM).
-* `generar_datos_artificiales.py`: Script para regenerar misiones sinteticas completas con cualquier duracion (`py generar_datos_artificiales.py [segundos]`).
+* `herramientas/generar_datos_artificiales.py`: Script para regenerar misiones sinteticas completas con cualquier duracion (`py herramientas/generar_datos_artificiales.py [segundos]`).
 
 ---
 
 ## 7. Instrucciones y Prompts para Otras IAs
 
 Para generar nuevos diagramas de arquitectura (Mermaid, PlantUML) o ilustraciones renderizadas en 3D del cuadricoptero F450 y la estacion de tierra con cualquier modelo de IA (Claude, ChatGPT, Midjourney, DALL-E), consulte la guia detallada:  
-**[GUIA_PROMPTS_DIAGRAMAS_IA.md](GUIA_PROMPTS_DIAGRAMAS_IA.md)**
+**[docs/guias/GUIA_PROMPTS_DIAGRAMAS_IA.md](docs/guias/GUIA_PROMPTS_DIAGRAMAS_IA.md)**
 
 ---
 
@@ -169,4 +171,4 @@ Como siguiente fase de desarrollo para el proyecto de deteccion aerea de hormiga
    * Geocerca perimetral de contencion (`FENCE_ENABLE = 1`).
 
 Para consultar la especificacion tecnica y arquitectura completa de esta futura fase, revise el documento:  
-**[docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md](docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md)**
+**[docs/guias/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md](docs/guias/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md)**

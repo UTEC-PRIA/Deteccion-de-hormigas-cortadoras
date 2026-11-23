@@ -1,0 +1,10 @@
+{
+ "dron": "mini2se",
+ "camara": "FC7503",
+ "archivos": [
+  "DCIM/100MEDIA/DJI_0051.MP4",
+  "DCIM/100MEDIA/DJI_0052.MP4",
+  "DCIM/100MEDIA/DJI_0053.MP4"
+ ],
+ "precision_video_m": 11
+}

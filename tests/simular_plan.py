@@ -1,5 +1,6 @@
 """Simula un dron por UDP y prueba el plan de vuelo, sin hardware: .venv/bin/python -u tests/simular_plan.py"""
-import sys,time,threading,os;P=os.path.dirname(os.path.dirname(os.path.abspath(__file__)));sys.path.insert(0,P);import tempfile;os.chdir(tempfile.mkdtemp())
+import sys,time,threading,os;P=os.path.dirname(os.path.dirname(os.path.abspath(__file__)));sys.path.insert(0,os.path.join(P,"app"));import tempfile;os.chdir(tempfile.mkdtemp())
+import rutas;rutas.F450=os.path.join(os.getcwd(),"vuelos")
 import web_dashboard as w, plan_vuelo as pv
 from pymavlink import mavutil
 from fastapi import HTTPException
