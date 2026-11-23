@@ -7,6 +7,13 @@ El sistema permite ver la telemetria en tiempo real a traves de una radio de 915
 
 Las fotografias resultantes son compatibles de forma directa con software de fotogrametria y GIS como **WebODM, Pix4D, Agisoft Metashape, QGIS y ArcGIS**.
 
+## Novedades
+
+El dashboard tiene cuatro pestañas: **Control**, **Vuelos y mapa**, **Imágenes y tags** y **Plan de vuelo**.
+Detalle en [CHANGELOG.md](CHANGELOG.md). Plan de vuelo: [docs/PLAN_DE_VUELO.md](docs/PLAN_DE_VUELO.md) (aún sin probar con la aeronave real).
+
+Los metadatos imitan el formato DJI Mini 2 SE por compatibilidad fotogramétrica: las imágenes son de la GoPro.
+
 ---
 
 ## 1. Instalacion Rapida (Solo la primera vez)
@@ -31,7 +38,7 @@ Instala las dependencias del sistema operativo (`libimage-exiftool-perl`, `pytho
 ## 2. Puesta en Marcha (Un Clic)
 
 * **En Windows:** Doble clic en `iniciar_dashboard.bat`
-* **En Ubuntu:** Ejecutar en terminal `./iniciar_dashboard.sh`
+* **En Ubuntu:** Ejecutar en terminal `./ejecutar.sh` (crea el entorno la primera vez) o `./iniciar_dashboard.sh`
 
 El programa abrira automaticamente su navegador en:  
 **`http://localhost:8000`**
@@ -64,9 +71,9 @@ El programa abrira automaticamente su navegador en:
 1. Encienda la GoPro HERO13. En la pantalla tactil: *Preferencias* -> *Conexiones* -> *Conexion USB* -> Verifique que este en **GoPro Connect**.
 2. Conecte la GoPro por cable USB a la computadora y la antena receptora de 915 MHz en otro puerto USB.
 3. En la pagina web (`http://localhost:8000`), el sistema realizara el **Autoescaneo** mostrando el estado de la radio, bateria 3S y camara.
-4. Presione **[Sincronizar Relojes]** para calibrar la hora interna de la camara (< 0.05 s de diferencia) y registrar fotos previas.
+4. Presione **[Sincronizar Relojes]** para igualar la hora de la camara a la de la PC; el panel muestra el desfase medido y registra los archivos previos.
 5. Puede iniciar el disparo con el boton **[Grabar Camara]** verificando el indicador en pantalla antes de desconectar el cable, o presionar el obturador fisico superior de la camara una vez montada en el dron.
-6. **Desconexion para vuelo:** Al desconectar el cable USB, la GoPro HERO13 cuenta con bateria interna propia y continuara grabando ininterrumpidamente en su tarjeta SD. El dashboard mantendra el estado `GRABANDO EN VUELO (Autonoma)`.
+6. **Desconexion para vuelo:** Al desconectar el cable USB, la GoPro HERO13 cuenta con bateria interna propia y continuara grabando ininterrumpidamente en su tarjeta SD. Sin cable el dashboard **no puede comprobarlo**: verifique la luz roja de la camara.
 7. Monte la GoPro en el soporte inferior del dron orientada perpendicularmente hacia el suelo (Nadir).
 
 ### Paso 2: Durante el Vuelo (Radio de 915 MHz)
@@ -114,12 +121,12 @@ La camara se configura siempre de manera automatica en **Modo Video 4K a 30 FPS*
 ## 6. Capturas de Pantalla y Datos de Ejemplo
 
 ### Interfaz del Dashboard Web
-* **Vista General con Autoescaneo OK:** [docs/imagenes/dashboard_autoescaneo_ok.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_autoescaneo_ok.png)
-* **Estado de Grabacion en Vivo Verificado:** [docs/imagenes/dashboard_grabando_en_vivo.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_grabando_en_vivo.png)
-* **Estado en Espera (Standby):** [docs/imagenes/dashboard_en_espera.png](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/imagenes/dashboard_en_espera.png)
+* **Vista General con Autoescaneo OK:** [docs/imagenes/dashboard_autoescaneo_ok.png](docs/imagenes/dashboard_autoescaneo_ok.png)
+* **Estado de Grabacion en Vivo Verificado:** [docs/imagenes/dashboard_grabando_en_vivo.png](docs/imagenes/dashboard_grabando_en_vivo.png)
+* **Estado en Espera (Standby):** [docs/imagenes/dashboard_en_espera.png](docs/imagenes/dashboard_en_espera.png)
 
 ### Ejemplos de Salida y Generador de Datos Artificiales
-En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/ejemplos_salida/vuelo_mision_campo_01/) y [datos_artificiales/mision_simulada_4k/](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/datos_artificiales/mision_simulada_4k/) se incluyen conjuntos de datos sinteticos para pruebas inmediatas:
+En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](ejemplos_salida/vuelo_mision_campo_01/) y [datos_artificiales/mision_simulada_4k/](datos_artificiales/mision_simulada_4k/) se incluyen conjuntos de datos sinteticos para pruebas inmediatas:
 * `telemetria.csv`: Archivo de telemetria a 4 Hz con coordenadas, altura, actitud y voltaje de bateria 3S.
 * `video_vuelo_mision_01.MP4`: Video 4K a 30 FPS de patrulla aerea.
 * `video_vuelo_mision_01.SRT`: Archivo de subtitulos de telemetria por segundo en formato DJI.
@@ -131,7 +138,7 @@ En la carpeta [ejemplos_salida/vuelo_mision_campo_01/](file:///C:/Users/paeze/De
 ## 7. Instrucciones y Prompts para Otras IAs
 
 Para generar nuevos diagramas de arquitectura (Mermaid, PlantUML) o ilustraciones renderizadas en 3D del cuadricoptero F450 y la estacion de tierra con cualquier modelo de IA (Claude, ChatGPT, Midjourney, DALL-E), consulte la guia detallada:  
-**[GUIA_PROMPTS_DIAGRAMAS_IA.md](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/GUIA_PROMPTS_DIAGRAMAS_IA.md)**
+**[GUIA_PROMPTS_DIAGRAMAS_IA.md](GUIA_PROMPTS_DIAGRAMAS_IA.md)**
 
 ---
 
@@ -143,6 +150,8 @@ El manual operativo completo con diagramas y protocolo de campo impreso se encue
 ---
 
 ## 9. Siguientes Pasos: Sistema de Navegacion Autonoma por Waypoints
+
+> El diseño, la grilla y la carga de waypoints ya existen en la pestaña Plan de vuelo. Lo que sigue es la hoja de ruta original.
 
 Como siguiente fase de desarrollo para el proyecto de deteccion aerea de hormigas cortadoras con el cuadricoptero F450, se planifica la implementacion de navegacion autonoma por grilla de escaneo:
 
@@ -160,4 +169,4 @@ Como siguiente fase de desarrollo para el proyecto de deteccion aerea de hormiga
    * Geocerca perimetral de contencion (`FENCE_ENABLE = 1`).
 
 Para consultar la especificacion tecnica y arquitectura completa de esta futura fase, revise el documento:  
-**[docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md](file:///C:/Users/paeze/Deteccion-de-hormigas-cortadoras/docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md)**
+**[docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md](docs/ROADMAP_NAVEGACION_WAYPOINTS_AUTONOMA.md)**

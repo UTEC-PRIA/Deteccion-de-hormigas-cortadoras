@@ -1,5 +1,7 @@
 # Roadmap y Especificacion de Siguientes Pasos: Navegacion Autonoma por Waypoints
 
+> Implementado en parte: ver [PLAN_DE_VUELO.md](PLAN_DE_VUELO.md). Este documento es la hoja de ruta original.
+
 **Proyecto:** Relevamiento Aereo de Hormigas Cortadoras con UAV  
 **Institucion:** UTEC - PRIA (Universidad Tecnologica del Uruguay)  
 **Aeronave:** Cuadricoptero F450 con Pixhawk 2.4.8 (ArduCopter) y Camara GoPro HERO13 Nadir (-90°)  

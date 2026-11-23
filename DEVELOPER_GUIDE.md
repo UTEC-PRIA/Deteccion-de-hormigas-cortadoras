@@ -4,6 +4,28 @@ Este documento está diseñado para futuros desarrolladores, investigadores o es
 
 ---
 
+## 0. Arquitectura vigente (dashboard en `web_dashboard.py`)
+
+> Las secciones 1 a 5 describen el framework anterior (`main.py`), que el dashboard actual no usa.
+
+| Archivo | Funcion |
+|---|---|
+| `web_dashboard.py` | FastAPI, pagina Control, hilo de telemetria (4 Hz), GoPro USB, procesamiento |
+| `vincular_vuelo_dji.py` | Extraccion de fotogramas, interpolacion y metadatos |
+| `sincronizar_relojes.py` | Deteccion de equipos, hora y desfase de la camara |
+| `visor_vuelos.py` | Rutas `/api/vuelos` y `/vuelos`, visor con mapa, miniaturas y tags |
+| `plan_vuelo.py` | Rutas `/api/plan`, validacion y protocolo de mision MAVLink |
+| `static/pestanas.js`, `static/plan.html` | Pestañas y editor de plan; Leaflet 1.9.4 en `static/leaflet/` (BSD-2) |
+
+Reglas: `PUERTO_LOCK` protege la apertura del puerto serie; durante una mision solo `bucle_telemetria` lee MAVLink;
+las ordenes del plan exigen la cabecera `X-Hormigas`; la telemetria usa el reloj de la PC; los limites estan en `plan_vuelo.LIM`.
+
+Datos por vuelo (`vuelos/NOMBRE_FECHA/`; `video/` y `fotos/` no se versionan por tamaño): `telemetria.csv`, `telemetria.tlog`, `mision.json`, `video/`, `fotos/`, `miniaturas/`.
+
+Prueba sin hardware: `.venv/bin/python -u tests/simular_plan.py`
+
+---
+
 ## 1. Arquitectura General del Sistema
 
 El sistema sigue una arquitectura cliente-servidor basada en eventos, separando el hardware (cámara y telemetría) de la interfaz de usuario mediante una API REST y un canal WebSocket.

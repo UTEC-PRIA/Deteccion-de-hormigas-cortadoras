@@ -13,6 +13,9 @@ import json
 import threading
 import subprocess
 import webbrowser
+import struct
+import re
+from collections import deque
 from datetime import datetime, timezone
 import requests
 import serial.tools.list_ports
@@ -20,7 +23,7 @@ from pymavlink import mavutil
 import uvicorn
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Importar funciones de vinculacion DJI
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +33,8 @@ from vincular_vuelo_dji import (
     escribir_metadatos_dji,
     escribir_metadatos_dji_batch,
     dividir_video_en_imagenes_dji,
+    calcular_inicios_videos,
+    hora_local_exif,
     generar_srt_dji,
     obtener_timestamp_imagen
 )
@@ -38,18 +43,18 @@ from sincronizar_relojes import (
     buscar_puerto_pixhawk,
     leer_tiempo_gps_pixhawk,
     fijar_hora_gopro,
-    consultar_estado_gopro
+    consultar_estado_gopro,
+    medir_desfase_gopro
 )
 
 app = FastAPI(title="UTEC PRIA - UAV Telemetry Dashboard")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from visor_vuelos import router as router_visor
+app.include_router(router_visor)
+import plan_vuelo
+from plan_vuelo import PUERTO_LOCK
+app.include_router(plan_vuelo.router)
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")), name="static")
 
 class EstadoSistema:
     def __init__(self):
@@ -77,6 +82,16 @@ class EstadoSistema:
         self.modo_vuelo = "DESCONOCIDO"
         self.total_registros = 0
         self.ultimo_registro_tiempo = 0
+        self.puerto_real = None
+        self.ultimo_msg_tiempo = 0.0       # ultimo paquete MAVLink del autopiloto
+        self.ultima_solicitud_stream = 0.0
+        self.sistema_autopiloto = None     # sysid del autopiloto (ignora GCS / otros)
+        self.snapshot_medios_tomado = False
+        self.ultimos_voltajes = deque(maxlen=20)
+        self.procesando = False
+        self.armado = False
+        self.rc_canales = 0
+        self.wp_actual = None
 
         # Hardware GoPro
         self.gopro_ip = None
@@ -100,6 +115,55 @@ MODOS_ARDUPILOT = {
     5: 'LOITER', 6: 'RTL', 7: 'CIRCLE', 9: 'LAND', 11: 'DRIFT',
     13: 'SPORT', 14: 'FLIP', 15: 'AUTOTUNE', 16: 'POSHOLD', 17: 'BRAKE'
 }
+
+def puerto_es_util(p):
+    """Descarta puertos Bluetooth y puertos serie fisicos inexistentes (/dev/ttyS* sin hardware en Linux)."""
+    if "bluetooth" in (p.description or "").lower():
+        return False
+    if not sys.platform.startswith("win") and (p.hwid or "n/a") == "n/a":
+        return False
+    return True
+
+def resetear_telemetria_en_vivo():
+    """Evita que un vuelo nuevo arranque con la posicion/valores del vuelo anterior."""
+    estado.lat = estado.lon = 0.0
+    estado.alt_msl = estado.alt_rel = 0.0
+    estado.roll = estado.pitch = estado.yaw = estado.velocidad = 0.0
+    estado.satelites = 0
+    estado.modo_vuelo = "DESCONOCIDO"
+    estado.ultimo_msg_tiempo = 0.0
+    estado.ultima_solicitud_stream = 0.0
+    estado.sistema_autopiloto = None
+    estado.ultimo_registro_tiempo = 0
+    estado.ultimos_voltajes.clear()
+    estado.armado = False
+    estado.rc_canales = 0
+    estado.wp_actual = None
+
+def solicitar_streams(conn):
+    """Pide al autopiloto todos los streams a 4 Hz (se repite periodicamente por si se pierde)."""
+    try:
+        conn.mav.request_data_stream_send(
+            conn.target_system, conn.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1
+        )
+    except Exception:
+        pass
+
+def abrir_conexion_mavlink(puerto):
+    if "udp" in puerto.lower() or "tcp" in puerto.lower():
+        return mavutil.mavlink_connection(puerto, source_system=254)
+    return mavutil.mavlink_connection(puerto, baud=57600, source_system=254)
+
+def registrar_medios_previos(ip):
+    """Guarda la lista de archivos que YA estaban en la SD para no descargarlos como 'nuevos'."""
+    medios = obtener_lista_medios_gopro(ip)
+    if medios is None:
+        estado.snapshot_medios_tomado = False
+        return 0
+    estado.fotos_previas = {(d, n) for d, n, cre, size in medios}
+    estado.snapshot_medios_tomado = True
+    return len(estado.fotos_previas)
 
 def configurar_gopro_video_4k30(ip):
     """
@@ -176,34 +240,100 @@ def obtener_lista_medios_gopro(ip):
             return archivos
     except Exception:
         pass
-    return []
+    return None  # error de lectura: distinto de tarjeta vacia
+
+def guardar_mision():
+    """Guarda el estado de la mision en disco para poder reintentar aunque se cierre el dashboard."""
+    if not estado.carpeta_mision:
+        return
+    try:
+        ruta = os.path.join(estado.carpeta_mision, "mision.json")
+        with open(ruta + ".part", "w", encoding="utf-8") as f:
+            json.dump({"inicio": estado.tiempo_inicio_vuelo, "intervalo": estado.intervalo_fotos_seg,
+                       "snapshot": estado.snapshot_medios_tomado, "previas": sorted(estado.fotos_previas),
+                       "proceso": estado.estado_proceso}, f)
+        os.replace(ruta + ".part", ruta)
+    except Exception as e:
+        print(f"[AVISO] No se pudo guardar mision.json: {e}")
+
+def recuperar_mision():
+    """Al arrancar, deja lista para reintentar la ultima mision si quedo sin procesar."""
+    try:
+        carpetas = [os.path.join("vuelos", c) for c in os.listdir("vuelos")]
+        carpetas = [c for c in carpetas if os.path.exists(os.path.join(c, "telemetria.csv"))]
+        if not carpetas:
+            return
+        carpeta = max(carpetas, key=lambda c: c[-15:])
+        with open(os.path.join(carpeta, "mision.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        if m["proceso"] == "COMPLETADO":
+            return
+        estado.carpeta_mision = carpeta
+        estado.ruta_csv = os.path.join(carpeta, "telemetria.csv")
+        estado.tiempo_inicio_vuelo = m["inicio"]
+        estado.intervalo_fotos_seg = m["intervalo"]
+        estado.snapshot_medios_tomado = m["snapshot"]
+        estado.fotos_previas = {tuple(x) for x in m["previas"]}
+        estado.estado_proceso = "ERROR"
+        estado.mensaje_proceso = f"Mision {os.path.basename(carpeta)} sin procesar. Conecte la GoPro y presione Finalizar y Procesar."
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[AVISO] No se pudo recuperar la ultima mision: {e}")
 
 def bucle_telemetria():
     """Hilo secundario que captura y almacena paquetes MAVLink en vivo."""
     global estado
+    errores_seguidos = 0
     while estado.en_grabacion:
         try:
             if not estado.conexion_mavlink:
                 time.sleep(0.1)
                 continue
-            
+
+            ahora = time.time()
+            # Re-solicitar streams cada 10 s mientras no lleguen datos (radio recien conectada,
+            # Pixhawk reiniciada o solicitud inicial perdida en el enlace de 915 MHz)
+            if ahora - estado.ultimo_msg_tiempo > 3 and ahora - estado.ultima_solicitud_stream > 10:
+                solicitar_streams(estado.conexion_mavlink)
+                estado.ultima_solicitud_stream = ahora
+
             msg = estado.conexion_mavlink.recv_msg()
+            errores_seguidos = 0
             if msg is None:
                 time.sleep(0.01)
                 continue
 
+            mtype = msg.get_type()
+            if mtype == 'BAD_DATA':
+                continue
+            # Solo aceptar datos del autopiloto (ignorar heartbeats de GCS como Mission Planner)
+            if mtype == 'HEARTBEAT':
+                if msg.type == mavutil.mavlink.MAV_TYPE_GCS or msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+                    continue
+                if estado.sistema_autopiloto is None:
+                    estado.sistema_autopiloto = msg.get_srcSystem()
+            if estado.sistema_autopiloto is not None and msg.get_srcSystem() != estado.sistema_autopiloto:
+                continue
+            estado.ultimo_msg_tiempo = time.time()
+
             # Guardar en archivo binario tlog
             if estado.archivo_tlog:
                 try:
-                    estado.archivo_tlog.write(msg.get_msgbuf())
+                    estado.archivo_tlog.write(struct.pack('>Q', int(time.time() * 1e6)) + msg.get_msgbuf())
                 except Exception:
                     pass
-
-            mtype = msg.get_type()
 
             if mtype == 'HEARTBEAT':
                 cm = getattr(msg, 'custom_mode', 0)
                 estado.modo_vuelo = MODOS_ARDUPILOT.get(cm, f"MODO_{cm}")
+                estado.armado = bool(msg.base_mode & 128)
+
+            elif mtype == 'RC_CHANNELS':
+                estado.rc_canales = msg.chancount
+
+            elif mtype == 'MISSION_CURRENT':
+                estado.wp_actual = msg.seq
 
             elif mtype == 'GLOBAL_POSITION_INT':
                 estado.lat = msg.lat / 1e7
@@ -229,8 +359,9 @@ def bucle_telemetria():
                 estado.yaw = yaw if yaw >= 0 else (yaw + 360.0)
 
             elif mtype == 'SYS_STATUS':
-                if msg.voltage_battery > 0:
+                if 0 < msg.voltage_battery < 65535:
                     estado.bateria_dron = msg.voltage_battery / 1000.0
+                    estado.ultimos_voltajes.append(estado.bateria_dron)
 
             elif mtype == 'BATTERY_STATUS':
                 if hasattr(msg, 'voltages') and len(msg.voltages) > 0 and msg.voltages[0] != 65535:
@@ -240,7 +371,8 @@ def bucle_telemetria():
 
             ahora = time.time()
             # Escribir linea de telemetria en CSV cada 250 ms (4 Hz)
-            if ahora - estado.ultimo_registro_tiempo >= 0.25 and estado.archivo_csv:
+            tiene_posicion = not (estado.lat == 0.0 and estado.lon == 0.0)
+            if ahora >= estado.ultimo_registro_tiempo and estado.archivo_csv and tiene_posicion:
                 t_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 linea = (
                     f"{t_utc},{estado.lat:.7f},{estado.lon:.7f},{estado.alt_msl:.2f},"
@@ -250,11 +382,30 @@ def bucle_telemetria():
                 )
                 estado.archivo_csv.write(linea)
                 estado.archivo_csv.flush()
-                estado.ultimo_registro_tiempo = ahora
+                # Programar el proximo registro a +250 ms (evita derivar a ~3.3 Hz)
+                estado.ultimo_registro_tiempo = max(estado.ultimo_registro_tiempo + 0.25, ahora - 0.25)
                 estado.total_registros += 1
 
-        except Exception:
-            time.sleep(0.05)
+        except Exception as e:
+            errores_seguidos += 1
+            # Puerto serie caido (cable USB de la radio flojo/desconectado): reintentar abrirlo
+            if errores_seguidos >= 20 and estado.en_grabacion and estado.puerto_real:
+                print(f"[AVISO] Enlace de telemetria con errores ({e}). Reintentando abrir {estado.puerto_real}...")
+                try:
+                    estado.conexion_mavlink.close()
+                except Exception:
+                    pass
+                time.sleep(2)
+                try:
+                    if estado.en_grabacion:
+                        estado.conexion_mavlink = abrir_conexion_mavlink(estado.puerto_real)
+                        estado.ultima_solicitud_stream = 0.0
+                        print("[OK] Puerto de telemetria reabierto.")
+                except Exception:
+                    pass
+                errores_seguidos = 0
+            else:
+                time.sleep(0.05)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -554,6 +705,7 @@ async def index():
                     rVal.innerText = `${d.telemetria.puerto} (${d.telemetria.paquetes} paq/s)`;
                     rVal.className = "scan-item-val val-ok";
                     rSub.innerText = `Modo: ${d.telemetria.modo} | ${d.telemetria.satelites} sats`;
+                    (d.telemetria.avisos || []).forEach(a => { rSub.innerText += ` | ${a}`; rVal.className = "scan-item-val val-warn"; logMsg(`[AVISO DRON] ${a}`); });
                 } else {
                     rVal.innerText = "Sin Senal MAVLink";
                     rVal.className = "scan-item-val val-bad";
@@ -585,7 +737,7 @@ async def index():
                     gSub.innerText = `IP: ${d.gopro.ip} | ${recTxt}`;
                 } else {
                     if (d.gopro.grabando) {
-                        gVal.innerText = "Grabando en Vuelo";
+                        gVal.innerText = "Sin cable (no verificable)";
                         gVal.className = "scan-item-val val-ok";
                         gSub.innerText = "Autonoma en SD con bateria interna";
                     } else {
@@ -645,7 +797,7 @@ async def index():
                     elGpStatus.className = "status-value val-warn";
                     elGpBatt.innerText = "--";
                     if (d.gopro_grabando) {
-                        elGpRec.innerText = "GRABANDO EN VUELO (Autonoma)";
+                        elGpRec.innerText = "SIN CABLE: verifique luz roja en la camara";
                         elGpRec.className = "badge-cam-rec";
                     } else {
                         elGpRec.innerText = "EN ESPERA (Desconectada)";
@@ -696,15 +848,27 @@ async def index():
                 const btnFin = document.getElementById("btn-finalizar");
 
                 if (d.en_grabacion) {
-                    badge.innerText = "GRABANDO EN VIVO";
-                    badge.className = "badge-status badge-recording";
+                    const sinSenal = d.segundos_sin_telemetria === null || d.segundos_sin_telemetria > 3;
+                    if (sinSenal) {
+                        badge.innerText = d.segundos_sin_telemetria === null
+                            ? "GRABANDO - ESPERANDO SENAL DEL DRON"
+                            : `GRABANDO - SIN SENAL DEL DRON (${Math.round(d.segundos_sin_telemetria)} s)`;
+                        badge.className = "badge-status";
+                        badge.style.background = "var(--danger)";
+                    } else {
+                        badge.innerText = "GRABANDO EN VIVO";
+                        badge.className = "badge-status badge-recording";
+                        badge.style.background = "";
+                    }
                     btnIni.disabled = true;
                     btnFin.disabled = false;
                 } else {
                     badge.innerText = d.estado_proceso;
                     badge.className = "badge-status";
-                    btnIni.disabled = false;
-                    btnFin.disabled = true;
+                    badge.style.background = "";
+                    btnIni.disabled = d.procesando;
+                    // Si el procesamiento fallo (ej. GoPro sin cable), permitir reintentar
+                    btnFin.disabled = !(d.estado_proceso === "ERROR" && d.carpeta_mision);
                 }
 
                 // Metricas
@@ -764,7 +928,7 @@ async def index():
                 el.style.display = "block";
                 if (d.exito) {
                     el.className = "alert-box alert-success";
-                    el.innerText = `Sincronizacion completada con exito. Margen: < 0.05 segundos. (Hora: ${d.hora})`;
+                    el.innerText = `Sincronizacion completada. Desfase medido camara - PC: ${d.desfase === null ? 'no disponible' : d.desfase + ' s'}. (Hora: ${d.hora})`;
                     logMsg(`[OK] Reloj calibrado exitosamente con ${d.fuente}.`);
                 } else {
                     el.className = "alert-box alert-warning";
@@ -832,10 +996,15 @@ async def index():
             const d = await r.json();
             if (d.exito) {
                 logMsg(`[+] Telemetria iniciada en ${d.puerto}.`);
+                if (d.advertencia) {
+                    logMsg(`[AVISO] ${d.advertencia}`);
+                    alert(`ATENCION: ${d.advertencia}`);
+                }
                 if (d.gopro_iniciada) {
                     logMsg(`[+] Camara GoPro: Grabacion confirmada y activa en la camara (${d.gopro_mensaje}).`);
                 } else {
-                    logMsg("[AVISO] Camara sin conexion USB: inicie la grabacion manualmente en la GoPro antes del despegue.");
+                    logMsg(`[AVISO] CAMARA NO CONFIRMADA: ${d.gopro_mensaje}`);
+                    alert(`ATENCION: la camara NO esta confirmada como grabando.\\n${d.gopro_mensaje}\\nVerifiquela antes de despegar.`);
                 }
             } else {
                 alert(`Error al iniciar: ${d.error}`);
@@ -850,7 +1019,7 @@ async def index():
             
             const r = await fetch("/api/flight/stop_and_process", { method: "POST" });
             const d = await r.json();
-            logMsg(d.mensaje);
+            logMsg(d.mensaje || `[ERROR] ${d.error}`);
             actualizarHardware();
         }
 
@@ -864,12 +1033,17 @@ async def index():
         // Ejecutar autoescaneo activo inmediatamente al abrir
         ejecutarAutoescaneo();
     </script>
+    <script src="/static/pestanas.js"></script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
 
 @app.get("/api/scan_all")
 def scan_all():
+    with PUERTO_LOCK:
+        return _scan_all()
+
+def _scan_all():
     """Realiza un autoescaneo activo enviando pruebas reales a la radio y GoPro."""
     global estado
     
@@ -895,8 +1069,9 @@ def scan_all():
             pass
 
     # 2. Probar Radio 915 MHz y MAVLink real
+    avisos = set()
     if estado.en_grabacion and estado.conexion_mavlink:
-        telem_ok = True
+        telem_ok = bool(estado.ultimo_msg_tiempo) and time.time() - estado.ultimo_msg_tiempo < 3
         telem_puerto = "Activo"
         telem_modo = estado.modo_vuelo
         telem_paquetes = estado.total_registros or 10
@@ -904,34 +1079,49 @@ def scan_all():
         telem_sats = estado.satelites
     else:
         puertos_raw = list(serial.tools.list_ports.comports())
-        candidatos = [p.device for p in puertos_raw if "bluetooth" not in (p.description or "").lower()]
+        candidatos = [p.device for p in puertos_raw if puerto_es_util(p)]
         telem_ok = False
         telem_puerto = None
         telem_modo = "DESCONOCIDO"
         telem_paquetes = 0
+        voltajes = []
         telem_voltaje = estado.bateria_dron
         telem_sats = estado.satelites
 
         for port in candidatos:
             try:
-                m = mavutil.mavlink_connection(port, baud=57600, timeout=1.2)
-                m.mav.request_data_stream_send(m.target_system, m.target_component, mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1)
+                m = mavutil.mavlink_connection(port, baud=57600, source_system=254)
+                if not m.wait_heartbeat(timeout=2.5):
+                    m.close()
+                    continue
+                solicitar_streams(m)
                 t_ini = time.time()
-                while time.time() - t_ini < 1.8:
-                    msg = m.recv_msg()
-                    if msg:
+                while time.time() - t_ini < 3.0:
+                    msg = m.recv_match(blocking=True, timeout=0.3)
+                    if msg and msg.get_type() != 'BAD_DATA' and msg.get_srcSystem() == m.target_system:
                         telem_paquetes += 1
                         mtype = msg.get_type()
                         if mtype == 'HEARTBEAT':
                             cm = getattr(msg, 'custom_mode', 0)
                             telem_modo = MODOS_ARDUPILOT.get(cm, f"MODO_{cm}")
                         elif mtype == 'SYS_STATUS':
-                            if msg.voltage_battery > 0:
-                                telem_voltaje = msg.voltage_battery / 1000.0
+                            if 0 < msg.voltage_battery < 65535:
+                                voltajes.append(msg.voltage_battery / 1000.0)
+                                telem_voltaje = sum(voltajes) / len(voltajes)
                                 estado.bateria_dron = telem_voltaje
+                            # Salida de motores deshabilitada = boton de seguridad activo
+                            if not msg.onboard_control_sensors_enabled & 32768:
+                                avisos.add("Boton de seguridad activo: no armara")
                         elif mtype == 'GPS_RAW_INT':
                             telem_sats = getattr(msg, 'satellites_visible', telem_sats)
                             estado.satelites = telem_sats
+                            if msg.fix_type < 3:
+                                avisos.add("GPS sin fix 3D")
+                        elif mtype == 'RC_CHANNELS':
+                            if msg.chancount == 0:
+                                avisos.add("Sin senal del control remoto")
+                        elif mtype == 'STATUSTEXT' and 'PreArm' in msg.text:
+                            avisos.add(msg.text)
                         if telem_paquetes >= 3:
                             telem_ok = True
                             telem_puerto = port
@@ -951,7 +1141,8 @@ def scan_all():
         },
         "telemetria": {
             "conectada": telem_ok,
-            "puerto": telem_puerto or "COM10",
+            "puerto": telem_puerto or "--",
+            "avisos": sorted(avisos),
             "modo": telem_modo,
             "paquetes": telem_paquetes,
             "bateria_v": telem_voltaje,
@@ -964,6 +1155,8 @@ def gopro_shutter_start():
     ip = estado.gopro_ip or buscar_ip_gopro()
     if not ip:
         return {"exito": False, "error": "GoPro no conectada por USB"}
+    if not consultar_grabacion_gopro(ip):
+        registrar_medios_previos(ip)
     ok, msg = activar_shutter_gopro(ip, iniciar=True)
     estado.gopro_grabando = ok
     return {"exito": ok, "mensaje": msg}
@@ -994,7 +1187,7 @@ def get_status():
         pass
 
     puertos_raw = list(serial.tools.list_ports.comports())
-    puertos = [{"dev": p.device, "desc": f"{p.device} ({p.description})"} for p in puertos_raw if "bluetooth" not in (p.description or "").lower()]
+    puertos = [{"dev": p.device, "desc": f"{p.device} ({p.description})"} for p in puertos_raw if puerto_es_util(p)]
     pix_puerto = buscar_puerto_pixhawk()
 
     return {
@@ -1013,9 +1206,11 @@ def get_status():
         "pitch": estado.pitch,
         "yaw": estado.yaw,
         "velocidad": estado.velocidad,
-        "bateria_dron": estado.bateria_dron,
+        "bateria_dron": (sum(estado.ultimos_voltajes) / len(estado.ultimos_voltajes)) if estado.ultimos_voltajes else estado.bateria_dron,
+        "procesando": estado.procesando,
         "modo_vuelo": estado.modo_vuelo,
         "total_registros": estado.total_registros,
+        "segundos_sin_telemetria": (round(time.time() - estado.ultimo_msg_tiempo, 1) if estado.ultimo_msg_tiempo else None),
         "estado_proceso": estado.estado_proceso,
         "mensaje_proceso": estado.mensaje_proceso,
         "progreso_porcentaje": estado.progreso_porcentaje,
@@ -1026,42 +1221,48 @@ def get_status():
 @app.post("/api/sync_clocks")
 def sync_clocks():
     global estado
-    gopro_ip = estado.gopro_ip or buscar_ip_gopro()
+    if estado.en_grabacion or estado.procesando:
+        return {"exito": False, "error": "Hay una mision o un procesamiento en curso."}
+    gopro_ip = buscar_ip_gopro()
     if not gopro_ip:
         return {"exito": False, "error": "GoPro no encontrada. Verifique la conexion por cable USB."}
 
-    puerto_pix = buscar_puerto_pixhawk()
-    tiempo_pix = None
-    gps_fix = 0
-    sats = 0
-    if puerto_pix:
-        tiempo_pix, gps_fix, sats = leer_tiempo_gps_pixhawk(puerto_pix)
-
-    if tiempo_pix and gps_fix >= 3:
-        fuente = f"GPS Pixhawk (Fix 3D con {sats} satelites)"
-        tiempo_ref = tiempo_pix.astimezone()
-    else:
-        fuente = "Reloj de la Computadora (NTP)"
-        tiempo_ref = datetime.now()
-
+    # La telemetria se registra con el reloj de la PC: la camara debe usar esa misma base
+    if consultar_grabacion_gopro(gopro_ip):
+        return {"exito": False, "error": "La camara esta grabando. Detengala antes de sincronizar."}
+    fuente = "Reloj de la Computadora"
+    tiempo_ref = datetime.now()
     ok, datos = fijar_hora_gopro(gopro_ip, tiempo_ref)
     if ok:
+        if not consultar_grabacion_gopro(gopro_ip):
+            registrar_medios_previos(gopro_ip)
         estado.gopro_bateria = consultar_estado_gopro(gopro_ip)
         return {
             "exito": True,
             "fuente": fuente,
             "hora": f"{datos.get('date')} {datos.get('time')}",
+            "desfase": medir_desfase_gopro(gopro_ip),
             "bateria": estado.gopro_bateria
         }
     return {"exito": False, "error": "Fallo al escribir la hora en la GoPro"}
 
 @app.post("/api/flight/start")
 def start_flight(data: dict):
+    if not PUERTO_LOCK.acquire(timeout=20):
+        return {"exito": False, "error": "El puerto de la radio esta en uso (plan de vuelo). Reintente."}
+    try:
+        return _start_flight(data)
+    finally:
+        PUERTO_LOCK.release()
+
+def _start_flight(data: dict):
     global estado
     if estado.en_grabacion:
         return {"exito": False, "error": "Ya hay una grabacion en curso."}
+    if estado.procesando:
+        return {"exito": False, "error": "Espere a que termine el procesamiento del vuelo anterior."}
 
-    nombre_mision = data.get("mision", "Vuelo").replace(" ", "_")
+    nombre_mision = re.sub(r"[^\w.-]+", "_", data.get("mision", "Vuelo")).strip("._") or "Vuelo"
     puerto_sel = data.get("puerto", "AUTO")
     estado.intervalo_fotos_seg = float(data.get("intervalo", 1.0))
 
@@ -1079,20 +1280,23 @@ def start_flight(data: dict):
     ruta_tlog = os.path.join(carpeta, "telemetria.tlog")
 
     try:
-        if "udp" in puerto_real.lower():
-            conn = mavutil.mavlink_connection(puerto_real)
-        else:
-            conn = mavutil.mavlink_connection(puerto_real, baud=57600)
+        conn = abrir_conexion_mavlink(puerto_real)
     except Exception as e:
         return {"exito": False, "error": f"No se pudo conectar a {puerto_real}: {e}"}
 
+    # Verificar que realmente llegue un HEARTBEAT del autopiloto (hasta 3 s)
+    hb = None
     try:
-        conn.mav.request_data_stream_send(
-            conn.target_system, conn.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1
-        )
+        hb = conn.wait_heartbeat(timeout=3)
     except Exception:
         pass
+    solicitar_streams(conn)
+    advertencia_enlace = None if hb else (
+        f"No se recibio senal del dron en {puerto_real}. La grabacion queda activa y "
+        "empezara a registrar cuando llegue telemetria: verifique radio 915 MHz y bateria del dron.")
+
+    resetear_telemetria_en_vivo()
+    estado.puerto_real = puerto_real
 
     estado.conexion_mavlink = conn
     estado.carpeta_mision = carpeta
@@ -1106,36 +1310,49 @@ def start_flight(data: dict):
     estado.tiempo_inicio_vuelo = time.time()
     estado.en_grabacion = True
     estado.estado_proceso = "GRABANDO EN VIVO"
+    estado.mensaje_proceso = ""
+    estado.progreso_porcentaje = 0
 
     # Iniciar y verificar grabacion GoPro
     gopro_iniciada = False
     gopro_msg = "GoPro no conectada por USB"
-    ip_gp = estado.gopro_ip or buscar_ip_gopro()
-    if ip_gp:
+    ip_gp = buscar_ip_gopro()
+    if ip_gp and consultar_grabacion_gopro(ip_gp):
+        # Ya estaba grabando (Grabar Camara): no re-registrar medios, conservar la lista previa
+        gopro_iniciada = True
+        gopro_msg = "La camara ya estaba grabando (4K 30 FPS)"
+        estado.gopro_grabando = True
+    elif ip_gp:
         # Registrar medios existentes en la camara antes de comenzar el vuelo
-        medios_existentes = obtener_lista_medios_gopro(ip_gp)
-        estado.fotos_previas = {(d, n) for d, n, cre, size in medios_existentes}
-
+        registrar_medios_previos(ip_gp)
         ok, msg = activar_shutter_gopro(ip_gp, iniciar=True)
         gopro_iniciada = ok
         gopro_msg = msg
         estado.gopro_grabando = ok
     elif estado.gopro_grabando:
-        gopro_iniciada = True
-        gopro_msg = "Grabacion activa en curso (iniciada previamente por cable, continuando en tarjeta SD)"
+        gopro_msg = "Camara sin cable: se inicio antes, pero no se puede comprobar que siga grabando"
 
     estado.hilo_telemetria = threading.Thread(target=bucle_telemetria, daemon=True)
     estado.hilo_telemetria.start()
+    guardar_mision()
 
     return {
         "exito": True,
         "puerto": puerto_real,
         "carpeta": carpeta,
         "gopro_iniciada": gopro_iniciada,
-        "gopro_mensaje": gopro_msg
+        "gopro_mensaje": gopro_msg,
+        "advertencia": advertencia_enlace
     }
 
 def tarea_procesamiento_post_vuelo():
+    try:
+        procesar_post_vuelo()
+    finally:
+        estado.procesando = False
+        guardar_mision()
+
+def procesar_post_vuelo():
     global estado
     try:
         # 1. Comprobar conexion con GoPro (reintentar unos segundos por si recién conectan el cable USB)
@@ -1143,7 +1360,7 @@ def tarea_procesamiento_post_vuelo():
         estado.mensaje_proceso = "Comprobando conexion con GoPro..."
         estado.progreso_porcentaje = 5
 
-        ip = estado.gopro_ip or buscar_ip_gopro()
+        ip = buscar_ip_gopro()
         if not ip:
             for seg in range(15):
                 estado.mensaje_proceso = f"Esperando conexion USB de la GoPro ({15 - seg} s)... Conecte el cable a la PC."
@@ -1154,7 +1371,10 @@ def tarea_procesamiento_post_vuelo():
                     break
 
         if ip:
-            activar_shutter_gopro(ip, iniciar=False)
+            if consultar_grabacion_gopro(ip):
+                ok, msg = activar_shutter_gopro(ip, iniciar=False)
+                if not ok:
+                    raise RuntimeError(f"No se pudo detener la camara: {msg}")
             estado.gopro_grabando = False
             time.sleep(1.5)  # Esperar que la GoPro finalice de escribir el archivo MP4
 
@@ -1167,10 +1387,18 @@ def tarea_procesamiento_post_vuelo():
         estado.progreso_porcentaje = 10
 
         medios_actuales = obtener_lista_medios_gopro(ip)
+        if medios_actuales is None:
+            raise RuntimeError("No se pudo leer la lista de archivos de la GoPro. Reintente.")
         nuevos = []
+        # 'cre' de la GoPro es la hora LOCAL de la camara expresada como epoch
+        offset_local = datetime.now().astimezone().utcoffset().total_seconds()
+        limite_cre = (estado.tiempo_inicio_vuelo or 0) + offset_local - 30 * 60
         for d, n, cre, size in medios_actuales:
-            if (d, n) not in estado.fotos_previas:
-                nuevos.append((d, n, size))
+            if (d, n) in estado.fotos_previas:
+                continue
+            if not estado.snapshot_medios_tomado and cre and cre < limite_cre:
+                continue  # archivo viejo de la SD (no se registro la lista previa al vuelo)
+            nuevos.append((d, n, size))
 
         carpeta_video = os.path.join(estado.carpeta_mision, "video")
         carpeta_fotos = os.path.join(estado.carpeta_mision, "fotos")
@@ -1180,7 +1408,7 @@ def tarea_procesamiento_post_vuelo():
         total_descargas = len(nuevos)
         if total_descargas == 0:
             estado.mensaje_proceso = "No se detectaron medios nuevos en la tarjeta SD de la GoPro."
-            estado.estado_proceso = "COMPLETADO"
+            estado.estado_proceso = "ERROR"
             estado.progreso_porcentaje = 100
             return
 
@@ -1196,12 +1424,17 @@ def tarea_procesamiento_post_vuelo():
             estado.mensaje_proceso = f"Descargando archivo {idx} de {total_descargas} ({n} - {tamanio_mb:.1f} MB)..."
             estado.progreso_porcentaje = int(10 + (idx / total_descargas) * 30)
 
-            with requests.get(url_descarga, stream=True, timeout=20) as r:
+            ya_descargado = os.path.exists(destino) and size > 0 and os.path.getsize(destino) == size
+            if not ya_descargado:
+              with requests.get(url_descarga, stream=True, timeout=20) as r:
                 r.raise_for_status()
-                with open(destino, 'wb') as f:
+                with open(destino + ".part", 'wb') as f:
                     for chunk in r.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
+              if size > 0 and os.path.getsize(destino + ".part") != size:
+                raise RuntimeError(f"Descarga incompleta de {n}. Reintente.")
+              os.replace(destino + ".part", destino)
 
             if es_video:
                 videos_descargados.append(destino)
@@ -1217,8 +1450,11 @@ def tarea_procesamiento_post_vuelo():
 
         # 2. Extraccion de fotogramas del video 4K e inyeccion de metadatos DJI Mini 2 SE
         total_fotos_generadas = 0
+        avisos_calidad = []
         if videos_descargados:
             estado.estado_proceso = "PROCESANDO_VIDEO"
+            videos_descargados.sort()
+            inicios = calcular_inicios_videos(videos_descargados, puntos)
             for v_idx, ruta_vid in enumerate(videos_descargados, 1):
                 nombre_vid = os.path.basename(ruta_vid)
                 
@@ -1231,9 +1467,11 @@ def tarea_procesamiento_post_vuelo():
                     puntos=puntos,
                     carpeta_salida=carpeta_fotos,
                     intervalo_segundos=estado.intervalo_fotos_seg,
-                    callback_progreso=progreso_extraccion
+                    callback_progreso=progreso_extraccion,
+                    t_inicio=inicios.get(ruta_vid)
                 )
-                total_fotos_generadas += len(fotos_ext)
+                total_fotos_generadas += getattr(dividir_video_en_imagenes_dji, "ultimas_etiquetadas", len(fotos_ext))
+                avisos_calidad += [f"{nombre_vid}: {a}" for a in getattr(dividir_video_en_imagenes_dji, "ultimos_avisos", [])]
 
         # 3. Si hubo fotos directas JPG, etiquetarlas tambien
         if fotos_directas_descargadas:
@@ -1244,8 +1482,7 @@ def tarea_procesamiento_post_vuelo():
                 t_foto = obtener_timestamp_imagen(ruta_f)
                 telem = interpolar_telemetria(puntos, t_foto)
                 if telem:
-                    dt_utc_str = datetime.fromtimestamp(t_foto, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
-                    metadatos_directas.append((ruta_f, telem, dt_utc_str))
+                    metadatos_directas.append((ruta_f, telem, hora_local_exif(t_foto)))
             etiquetadas = escribir_metadatos_dji_batch(metadatos_directas)
             total_fotos_generadas += etiquetadas
 
@@ -1258,6 +1495,8 @@ def tarea_procesamiento_post_vuelo():
             f"Exito: {len(videos_descargados)} video(s) 4K y {total_fotos_generadas} fotografias "
             f"etiquetadas con metadatos nativos DJI Mini 2 SE (Nadir -90°, HyperSmooth)."
         )
+        if avisos_calidad:
+            estado.mensaje_proceso += " ATENCION: " + "; ".join(avisos_calidad)
 
     except Exception as e:
         estado.estado_proceso = "ERROR"
@@ -1266,10 +1505,19 @@ def tarea_procesamiento_post_vuelo():
 @app.post("/api/flight/stop_and_process")
 def stop_flight(background_tasks: BackgroundTasks):
     global estado
+    if estado.procesando:
+        return {"exito": False, "error": "Ya se esta procesando el vuelo."}
     if not estado.en_grabacion:
+        if estado.carpeta_mision and estado.estado_proceso == "ERROR":
+            estado.procesando = True
+            background_tasks.add_task(tarea_procesamiento_post_vuelo)
+            return {"exito": True, "mensaje": "Reintentando descarga USB y etiquetado DJI del ultimo vuelo..."}
         return {"exito": False, "error": "No hay ningun vuelo en grabacion actualmente."}
 
     estado.en_grabacion = False
+    estado.procesando = True
+    if estado.hilo_telemetria:
+        estado.hilo_telemetria.join(timeout=3)
     
     if estado.archivo_csv:
         estado.archivo_csv.close()
@@ -1289,7 +1537,8 @@ def stop_flight(background_tasks: BackgroundTasks):
 
 @app.get("/api/open_folder")
 def open_folder(ruta: str):
-    if os.path.exists(ruta):
+    raiz = os.path.realpath("vuelos")
+    if os.path.isdir(ruta) and os.path.realpath(ruta).startswith(raiz + os.sep):
         if sys.platform.startswith('win'):
             os.startfile(ruta)
         elif sys.platform.startswith('darwin'):
@@ -1299,13 +1548,17 @@ def open_folder(ruta: str):
         return {"exito": True}
     return {"exito": False, "error": "Ruta no encontrada"}
 
+plan_vuelo.conexion.update(abrir=abrir_conexion_mavlink, puerto=buscar_puerto_pixhawk, estado=estado)
+
 def iniciar_servidor():
     print("=================================================================")
     print("   INICIANDO DASHBOARD WEB UAV UTEC-PRIA")
     print("   Abriendo navegador en: http://localhost:8000")
     print("=================================================================")
     threading.Timer(1.2, lambda: webbrowser.open("http://localhost:8000")).start()
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    recuperar_mision()
+    # Solo esta PC; HORMIGAS_HOST=0.0.0.0 para permitir acceso desde la red
+    uvicorn.run(app, host=os.environ.get("HORMIGAS_HOST", "127.0.0.1"), port=8000, log_level="warning")
 
 if __name__ == "__main__":
     iniciar_servidor()

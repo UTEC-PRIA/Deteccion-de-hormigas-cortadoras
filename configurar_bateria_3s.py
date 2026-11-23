@@ -30,8 +30,14 @@ PARAMETROS_3S = [
 ]
 
 def buscar_puerto():
+    from sincronizar_relojes import buscar_puerto_pixhawk
+    puerto = buscar_puerto_pixhawk()
+    if puerto:
+        return puerto
+    # Descartar Bluetooth y puertos serie sin hardware (/dev/ttyS* en Linux)
     puertos = list(serial.tools.list_ports.comports())
-    candidatos = [p.device for p in puertos if "bluetooth" not in (p.description or "").lower()]
+    candidatos = [p.device for p in puertos
+                  if "bluetooth" not in (p.description or "").lower() and (p.hwid or "n/a") != "n/a"]
     return candidatos[0] if candidatos else "COM10"
 
 def main():

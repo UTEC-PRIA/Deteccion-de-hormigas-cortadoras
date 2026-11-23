@@ -68,7 +68,7 @@ def buscar_puerto_pixhawk():
             return "COM7"
     return None
 
-def leer_tiempo_gps_pixhawk(puerto, baud=115200, timeout=5):
+def leer_tiempo_gps_pixhawk(puerto, baud=57600, timeout=5):
     """Consulta la hora UTC del GPS de la Pixhawk mediante MAVLink."""
     print(f"[*] Conectando a Pixhawk en {puerto} a {baud} baudios...")
     master = None
@@ -87,6 +87,7 @@ def leer_tiempo_gps_pixhawk(puerto, baud=115200, timeout=5):
 
         inicio = time.time()
         pix_utc = None
+        t_recepcion = None
         gps_fix = 0
         satelites = 0
 
@@ -95,16 +96,19 @@ def leer_tiempo_gps_pixhawk(puerto, baud=115200, timeout=5):
             if msg:
                 t = msg.get_type()
                 if t == 'GPS_RAW_INT':
+                    # No usar time_usec como hora: ArduPilot envia ahi el tiempo desde el encendido
                     gps_fix = msg.fix_type
                     satelites = msg.satellites_visible
-                    if msg.time_usec > 0 and gps_fix >= 3:
-                        pix_utc = datetime.fromtimestamp(msg.time_usec / 1e6, tz=timezone.utc)
-                        break
                 elif t == 'SYSTEM_TIME':
-                    if msg.time_unix_usec > 0:
+                    # Descartar horas invalidas (GPS aun sin hora UTC): minimo 2020-01-01
+                    if msg.time_unix_usec >= 1577836800 * 1000000:
                         pix_utc = datetime.fromtimestamp(msg.time_unix_usec / 1e6, tz=timezone.utc)
-                        if gps_fix >= 3:
-                            break
+                        t_recepcion = time.time()
+                if pix_utc is not None and gps_fix >= 3:
+                    break
+        if pix_utc is not None:
+            # Llevar la hora GPS al instante actual (el paquete llego hace t segundos)
+            pix_utc = pix_utc + timedelta(seconds=time.time() - t_recepcion)
         return pix_utc, gps_fix, satelites
     except Exception as e:
         print(f"[AVISO] Comunicacion MAVLink con Pixhawk no establecida: {e}")
@@ -117,7 +121,14 @@ def leer_tiempo_gps_pixhawk(puerto, baud=115200, timeout=5):
                 pass
 
 def fijar_hora_gopro(gopro_ip, fecha_hora_objetivo):
-    """Escribe la fecha y hora en el reloj interno de la GoPro."""
+    """Escribe la fecha y hora en el reloj interno de la GoPro.
+    La API solo acepta segundos enteros: se espera al proximo cambio de segundo de la
+    referencia y se envia ese instante exacto (sin esto el error llega a 1 s = ~3.5 m de vuelo)."""
+    delta = fecha_hora_objetivo.timestamp() - time.time()   # referencia vs reloj de la PC
+    t_ref = time.time() + delta
+    siguiente = int(t_ref) + 1
+    time.sleep(max(0.0, siguiente - t_ref - 0.005))          # ~5 ms de latencia HTTP por USB
+    fecha_hora_objetivo = datetime.fromtimestamp(siguiente).astimezone()
     fecha_str = fecha_hora_objetivo.strftime("%Y_%m_%d")
     hora_str = fecha_hora_objetivo.strftime("%H_%M_%S")
     
@@ -133,6 +144,22 @@ def fijar_hora_gopro(gopro_ip, fecha_hora_objetivo):
         except Exception:
             return True, {"date": fecha_str, "time": hora_str}
     return False, None
+
+def medir_desfase_gopro(ip):
+    """Mide camara - PC en segundos observando un cambio de segundo del reloj de la GoPro."""
+    previa, fin = None, time.time() + 2.5
+    try:
+        while time.time() < fin:
+            t0 = time.time()
+            d = requests.get(f"http://{ip}:8080/gopro/camera/get_date_time", timeout=1).json()
+            t1 = time.time()
+            if previa and d["time"] != previa:
+                return round(datetime.strptime(d["date"] + d["time"], "%Y_%m_%d%H_%M_%S").timestamp() - (t0 + t1) / 2, 2)
+            previa = d["time"]
+            time.sleep(0.01)
+    except Exception:
+        pass
+    return None
 
 def consultar_estado_gopro(gopro_ip):
     """Consulta nivel de bateria y estado de almacenamiento."""

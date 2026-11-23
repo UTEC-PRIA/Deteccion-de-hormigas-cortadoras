@@ -2,8 +2,10 @@ static/media/
 __pycache__/
 *.pyc
 misiones/
-vuelos/
+vuelos/*/video/
+vuelos/*/fotos/
 registros_vuelo/
 venv/
 .venv/
 *.tmp
+*.part

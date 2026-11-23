@@ -10,7 +10,7 @@
 
 El sistema cuenta ahora con un **Dashboard Web Local (`http://localhost:8000`)** que unifica todo el flujo de trabajo en una sola pantalla amigable e intuitiva:
 
-1. **Pre-Vuelo (Cables conectados a la PC):** Detecta la GoPro HERO13 Black y la Pixhawk por cable USB. Un boton permite sincronizar los relojes al milisegundo antes de salir a volar.
+1. **Pre-Vuelo (Cables conectados a la PC):** Detecta la GoPro HERO13 Black y la Pixhawk por cable USB. Un boton iguala el reloj de la camara al de la PC y muestra el desfase medido.
 2. **Durante el Vuelo (Radio 915 MHz conectada a la PC):** Al pulsar *Comenzar Grabacion*, recolecta la telemetria en tiempo real por la antena de 915 MHz, mostrando en vivo: modo de vuelo, altura sobre el suelo, satelites, rumbo y voltaje de bateria.
 3. **Al Aterrizar:** Al conectar la camara por USB y pulsar *Finalizar y Procesar*, el sistema:
    - Descarga automaticamente por cable USB todas las fotos o videos tomados durante el vuelo a la memoria de la computadora.
@@ -52,7 +52,7 @@ Ejecute en la terminal:
 3. **Inicio y Desconexion de la GoPro:**
    * La GoPro HERO13 cuenta con bateria interna propia (Enduro).
    * Puede presionar **[Grabar Camara]** desde el dashboard para confirmar el encendido por software antes de desconectarla, o presionar el boton superior del obturador fisico de la GoPro una vez montada.
-   * **Al desconectar el cable USB, la camara continuara grabando de forma ininterrumpida y autonoma en su tarjeta SD interna.** El dashboard mantendra el indicador visual `GRABANDO EN VUELO (Autonoma)`.
+   * **Al desconectar el cable USB, la camara continuara grabando de forma ininterrumpida y autonoma en su tarjeta SD interna.** El dashboard no puede comprobarlo sin cable: verifique la luz roja de la camara.
 4. Haga clic en **[Comenzar Grabacion]** en el dashboard.
 5. Vera el indicador cambiar a rojo: `GRABANDO EN VIVO` y vera los numeros de altura, satelites y bateria 3S actualizandose segundo a segundo.
 6. Realice el vuelo del dron sobre el lote de estudio.
@@ -74,8 +74,8 @@ Ejecute en la terminal:
 | :--- | :--- | :--- |
 | **Make** | `DJI` | Fabricante reconocido para perfiles de software. |
 | **Model** | `Mini 2 SE` | Modelo de dron y camara. |
-| **GPSLatitude** | `34 deg 34' 55.6" S` | Latitud WGS-84 precisa al milisegundo. |
-| **GPSLongitude** | `58 deg 25' 17.7" W` | Longitud WGS-84 precisa al milisegundo. |
+| **GPSLatitude** | `34 deg 34' 55.6" S` | Latitud WGS-84 interpolada de la telemetria a 4 Hz. |
+| **GPSLongitude** | `58 deg 25' 17.7" W` | Longitud WGS-84 interpolada de la telemetria a 4 Hz. |
 | **GPSAltitude** | `68.50 m Above Sea Level` | Altura ortometrica sobre el nivel del mar. |
 | **RelativeAltitude** | `+25.30` | Altura sobre el suelo / despegue (escala metrica del pixel). |
 | **AbsoluteAltitude** | `+68.50` | Altura geodesica de referencia. |
@@ -89,3 +89,21 @@ Ejecute en la terminal:
 En la raiz del repositorio se encuentra el documento impreso:  
 **`Manual_Operativo_Telemetria_GoPro_DJI.pdf`**  
 Contiene la version formal con tablas tecnicas y lista de chequeo de campo.
+
+---
+
+## 6. Lista de Chequeo y Problemas Frecuentes
+
+- [ ] Control encendido, GPS con fix 3D y 10 o mas satelites, LiPo cargada y medida con multimetro.
+- [ ] Boton de seguridad de la Pixhawk liberado y modo armable (no LAND).
+- [ ] Relojes sincronizados, registros subiendo y **luz roja en la camara** antes de despegar.
+- [ ] La radio queda conectada todo el vuelo; no cierre el dashboard ni suspenda la PC.
+- [ ] Al aterrizar: conecte la GoPro, espere "Conectada" y luego Finalizar y Procesar.
+
+| Problema | Que hacer |
+|---|---|
+| `Hardware safety switch` | Mantenga pulsado el boton de seguridad hasta LED fijo |
+| `Mode not armable` | Salga de LAND |
+| `Throttle below Failsafe` | Encienda el control o revise el receptor |
+| GoPro no detectada | Reinicie la camara; otro cable o puerto; GoPro Connect |
+| Error al procesar | Conecte la camara y repita Finalizar y Procesar; no formatee la SD |

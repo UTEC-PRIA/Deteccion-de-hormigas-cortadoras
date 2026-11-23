@@ -16,6 +16,7 @@ import shutil
 import csv
 from datetime import datetime, timezone, timedelta
 import bisect
+import re
 import cv2
 from pymavlink import mavutil
 
@@ -75,6 +76,8 @@ def cargar_desde_csv(ruta_csv):
                 pitch = float(fila.get('cabeceo_pitch', 0.0))
                 yaw = float(fila.get('rumbo_yaw', 0.0))
                 vel = float(fila.get('velocidad_ms', 0.0))
+                if lat == 0.0 and lon == 0.0:
+                    continue  # fila registrada antes de tener posicion GPS
                 
                 pt = PuntoTelemetria(
                     timestamp_utc=ts, lat=lat, lon=lon, alt_msl=alt_msl,
@@ -194,7 +197,7 @@ def interpolar_telemetria(puntos, target_time):
         rel_alt=p0.rel_alt + f * (p1.rel_alt - p0.rel_alt),
         roll=p0.roll + f * (p1.roll - p0.roll),
         pitch=p0.pitch + f * (p1.pitch - p0.pitch),
-        yaw=p0.yaw + f * (p1.yaw - p0.yaw),
+        yaw=(p0.yaw + f * (((p1.yaw - p0.yaw + 180.0) % 360.0) - 180.0)) % 360.0,
         vx=p0.vx + f * (p1.vx - p0.vx),
         vy=p0.vy + f * (p1.vy - p0.vy),
         vz=p0.vz + f * (p1.vz - p0.vz)
@@ -250,8 +253,8 @@ def escribir_metadatos_dji(ruta_img, telem):
         f"-GPSAltitude={telem.alt_msl:.2f}",
         "-GPSAltitudeRef=0",
         "-GPSMapDatum=WGS-84",
-        f"-XMP-drone-dji:AbsoluteAltitude=+{telem.alt_msl:.2f}",
-        f"-XMP-drone-dji:RelativeAltitude=+{telem.rel_alt:.2f}",
+        f"-XMP-drone-dji:AbsoluteAltitude={telem.alt_msl:+.2f}",
+        f"-XMP-drone-dji:RelativeAltitude={telem.rel_alt:+.2f}",
         f"-XMP-drone-dji:FlightRollDegree={telem.roll:.1f}",
         f"-XMP-drone-dji:FlightPitchDegree={telem.pitch:.1f}",
         f"-XMP-drone-dji:FlightYawDegree={telem.yaw:.1f}",
@@ -299,8 +302,7 @@ def escribir_metadatos_dji_batch(metadatos_lista):
         telem = item[1]
         dt_str = item[2] if len(item) > 2 and item[2] else None
         if not dt_str:
-            dt_utc = datetime.fromtimestamp(telem.timestamp, tz=timezone.utc)
-            dt_str = dt_utc.strftime("%Y:%m:%d %H:%M:%S")
+            dt_str = hora_local_exif(telem.timestamp)
 
         lat_ref = "N" if telem.lat >= 0 else "S"
         lon_ref = "E" if telem.lon >= 0 else "W"
@@ -310,7 +312,7 @@ def escribir_metadatos_dji_batch(metadatos_lista):
             f"{abs(telem.lat):.7f}", lat_ref,
             f"{abs(telem.lon):.7f}", lon_ref,
             f"{telem.alt_msl:.2f}", 0, "WGS-84",
-            f"+{telem.alt_msl:.2f}", f"+{telem.rel_alt:.2f}",
+            f"{telem.alt_msl:+.2f}", f"{telem.rel_alt:+.2f}",
             f"{telem.roll:.1f}", f"{telem.pitch:.1f}", f"{telem.yaw:.1f}",
             "0.0", "-90.0", f"{telem.yaw:.1f}",
             f"{telem.vx:.1f}", f"{telem.vy:.1f}", f"{telem.vz:.1f}",
@@ -342,7 +344,81 @@ def escribir_metadatos_dji_batch(metadatos_lista):
             except Exception: pass
         return 0
 
-def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_segundos=1.0, offset=0.0, callback_progreso=None):
+def obtener_inicio_video(ruta_video, puntos):
+    """
+    Devuelve el instante (epoch UTC) de inicio del video.
+    La GoPro guarda CreateDate del MP4 en hora LOCAL de la camara (no en UTC como dice
+    el estandar QuickTime). Se prueban ambas interpretaciones y se elige la que cae
+    dentro del rango temporal de la telemetria. Si ninguna coincide se emite un aviso,
+    porque todas las fotos quedarian con la posicion del extremo del registro.
+    """
+    cmd = [EXIFTOOL_CMD, "-api", "largefilesupport=1", "-s3", "-d", "%Y:%m:%d %H:%M:%S", "-CreateDate", ruta_video]  # videos > 4 GB
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    candidatos = []
+    try:
+        dt = datetime.strptime(res.stdout.strip(), "%Y:%m:%d %H:%M:%S")
+        if dt.year > 1970:
+            candidatos.append(("hora local", dt.astimezone().timestamp()))
+            candidatos.append(("UTC", dt.replace(tzinfo=timezone.utc).timestamp()))
+    except Exception:
+        pass
+    candidatos.append(("fecha de modificacion del archivo", os.path.getmtime(ruta_video)))
+
+    if puntos:
+        t_min, t_max = puntos[0].timestamp, puntos[-1].timestamp
+        dur = duracion_video(ruta_video)
+        # Vale si el video se superpone con la telemetria (la camara puede empezar antes)
+        for nombre, t in candidatos:
+            if t <= t_max and t + dur >= t_min:
+                print(f"[*] Inicio del video tomado de CreateDate ({nombre}).")
+                return t
+        print("[AVISO] El inicio del video NO coincide con el rango de la telemetria "
+              f"({datetime.fromtimestamp(t_min, tz=timezone.utc)} a {datetime.fromtimestamp(t_max, tz=timezone.utc)} UTC). "
+              "Las coordenadas de las fotos no seran correctas. Verifique la sincronizacion de relojes.")
+    return candidatos[0][1]
+
+def hora_local_exif(t_epoch):
+    """Fecha/hora EXIF en hora LOCAL (convencion de camaras DJI/GoPro y de obtener_timestamp_imagen)."""
+    return datetime.fromtimestamp(t_epoch).strftime("%Y:%m:%d %H:%M:%S")
+
+def duracion_video(ruta_video):
+    cap = cv2.VideoCapture(ruta_video)
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        n = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if n > 0:
+            return n / fps
+    finally:
+        cap.release()
+    res = subprocess.run([EXIFTOOL_CMD, "-api", "largefilesupport=1", "-s3", "-Duration#", ruta_video], capture_output=True, text=True)
+    try:
+        return float(res.stdout.strip())
+    except Exception:
+        return 0.0
+
+def calcular_inicios_videos(rutas_videos, puntos):
+    """
+    La GoPro divide las grabaciones largas en capitulos (GX010123, GX020123, GX030123...).
+    Los capitulos son continuos: el inicio del capitulo N es el inicio del N-1 mas su duracion.
+    Devuelve {ruta: t_inicio_epoch_utc}.
+    """
+    patron = re.compile(r"^G[HXLP]?[A-Z]?(\d{2})(\d{4})\.(MP4|MOV)$", re.IGNORECASE)
+    grupos, inicios = {}, {}
+    for ruta in rutas_videos:
+        m = patron.match(os.path.basename(ruta))
+        if m:
+            grupos.setdefault(m.group(2), []).append((int(m.group(1)), ruta))
+        else:
+            inicios[ruta] = obtener_inicio_video(ruta, puntos)
+    for capitulos in grupos.values():
+        capitulos.sort()
+        t = obtener_inicio_video(capitulos[0][1], puntos)
+        for _, ruta in capitulos:
+            inicios[ruta] = t
+            t += duracion_video(ruta)
+    return inicios
+
+def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_segundos=1.0, offset=0.0, callback_progreso=None, t_inicio=None):
     """
     Extrae fotogramas de un video 4K a intervalos regulares (por defecto 1 FPS),
     calcula la marca de tiempo exacta de cada fotograma, interpola los datos de
@@ -356,19 +432,8 @@ def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_
     nombre_base = os.path.splitext(os.path.basename(ruta_video))[0]
 
     # 1. Obtener timestamp inicial de inicio de grabacion del video (UTC)
-    cmd = [EXIFTOOL_CMD, "-s3", "-d", "%Y:%m:%d %H:%M:%S", "-CreateDate", ruta_video]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    dt_str = res.stdout.strip()
-    t_inicio = None
-    if dt_str:
-        try:
-            dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            t_inicio = dt.timestamp()
-        except Exception:
-            pass
     if t_inicio is None:
-        t_inicio = os.path.getmtime(ruta_video)
-
+        t_inicio = obtener_inicio_video(ruta_video, puntos)
     t_inicio += offset
 
     # 2. Abrir video con OpenCV
@@ -393,10 +458,22 @@ def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_
     fotos_guardadas = []
     frame_idx = 0
     num_foto = 1
+    fuera_de_rango = 0
+    en_hueco = 0
+    tiempos = [p.timestamp for p in puntos]
 
+    # Lectura secuencial: el salto con CAP_PROP_POS_FRAMES es impreciso en H.264/H.265
+    # de GoPro (cae en keyframes) y desalinearia la imagen con su marca de tiempo.
+    actual = 0
     while True:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok = True
+        while actual < frame_idx and ok:
+            ok = cap.grab()
+            actual += 1
+        if not ok:
+            break
         ret, frame = cap.read()
+        actual += 1
         if not ret:
             break
 
@@ -410,10 +487,16 @@ def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_
         cv2.imwrite(ruta_foto, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
         fotos_guardadas.append(ruta_foto)
 
-        telem = interpolar_telemetria(puntos, t_frame)
-        if telem:
-            dt_utc_str = datetime.fromtimestamp(t_frame, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
-            metadatos_batch.append((ruta_foto, telem, dt_utc_str))
+        if not tiempos or t_frame < tiempos[0] - 2 or t_frame > tiempos[-1] + 2:
+            fuera_de_rango += 1  # sin telemetria para este instante: no se inventa posicion
+        else:
+            i = bisect.bisect_left(tiempos, t_frame)
+            vecinos = tiempos[max(0, i - 1):i + 1]
+            if len(vecinos) == 2 and vecinos[1] - vecinos[0] > 2.0:
+                en_hueco += 1  # posicion interpolada sobre un corte de radio > 2 s
+            telem = interpolar_telemetria(puntos, t_frame)
+            if telem:
+                metadatos_batch.append((ruta_foto, telem, hora_local_exif(t_frame)))
 
         if callback_progreso and total_estimadas > 0:
             pct = min(90, int((num_foto / total_estimadas) * 80) + 10)
@@ -434,22 +517,35 @@ def dividir_video_en_imagenes_dji(ruta_video, puntos, carpeta_salida, intervalo_
     etiquetadas = escribir_metadatos_dji_batch(metadatos_batch)
 
     # 4. Generar subtitulos SRT para el video
-    generar_srt_dji(ruta_video, puntos)
+    generar_srt_dji(ruta_video, puntos, t_inicio=t_inicio)
+
+    avisos = []
+    if fuera_de_rango:
+        avisos.append(f"{fuera_de_rango} fotos sin GPS (fuera del rango de la telemetria)")
+    if en_hueco:
+        avisos.append(f"{en_hueco} fotos con posicion interpolada sobre cortes de radio > 2 s")
+    for a in avisos:
+        print(f"[AVISO] {a}")
+    if etiquetadas < len(metadatos_batch):
+        avisos.append(f"exiftool fallo: {len(metadatos_batch)} fotos sin etiquetar")
+    dividir_video_en_imagenes_dji.ultimos_avisos = avisos
+    dividir_video_en_imagenes_dji.ultimas_etiquetadas = etiquetadas
 
     if callback_progreso:
-        callback_progreso(100, f"Completado: {len(fotos_guardadas)} fotos generadas y etiquetadas en formato DJI.")
+        callback_progreso(100, f"Completado: {len(fotos_guardadas)} fotos generadas, {etiquetadas} etiquetadas.")
 
     print(f"[+] Extraccion completada con exito: {len(fotos_guardadas)} fotos generadas.")
     print(f"[+] Fotos etiquetadas con telemetria DJI: {etiquetadas}")
     return fotos_guardadas
 
-def generar_srt_dji(ruta_video, puntos):
+def generar_srt_dji(ruta_video, puntos, t_inicio=None):
     """Genera subtitulos de telemetria .SRT para video en formato DJI."""
     base, _ = os.path.splitext(ruta_video)
     ruta_srt = base + ".SRT"
     
-    t_inicio = obtener_timestamp_imagen(ruta_video)
-    cmd = [EXIFTOOL_CMD, "-s3", "-Duration#", ruta_video]
+    if t_inicio is None:
+        t_inicio = obtener_inicio_video(ruta_video, puntos)
+    cmd = [EXIFTOOL_CMD, "-api", "largefilesupport=1", "-s3", "-Duration#", ruta_video]
     res = subprocess.run(cmd, capture_output=True, text=True)
     try:
         duracion_seg = int(float(res.stdout.strip()))
@@ -462,10 +558,8 @@ def generar_srt_dji(ruta_video, puntos):
             telem = interpolar_telemetria(puntos, t_inicio + s)
             if not telem: continue
             
-            ts_ini = str(timedelta(seconds=s))
-            if len(ts_ini.split(":")) == 2: ts_ini = "00:" + ts_ini
-            ts_fin = str(timedelta(seconds=s+1))
-            if len(ts_fin.split(":")) == 2: ts_fin = "00:" + ts_fin
+            ts_ini = f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+            ts_fin = f"{(s + 1) // 3600:02d}:{((s + 1) % 3600) // 60:02d}:{(s + 1) % 60:02d}"
             
             bloque = (
                 f"{s + 1}\n"
@@ -561,7 +655,7 @@ def main():
             telem = interpolar_telemetria(puntos, t_foto)
 
             if telem:
-                dt_str = datetime.fromtimestamp(t_foto, tz=timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+                dt_str = hora_local_exif(t_foto)
                 metadatos_batch.append((ruta_foto, telem, dt_str))
                 print(f"  [{i}/{len(archivos)}] {nombre} -> Lat: {telem.lat:.6f}, Lon: {telem.lon:.6f}, AltRel: {telem.rel_alt:.1f}m [DJI OK]")
             else:
