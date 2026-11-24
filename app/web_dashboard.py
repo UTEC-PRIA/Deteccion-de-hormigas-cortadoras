@@ -456,6 +456,9 @@ def bucle_telemetria():
                 time.sleep(2)
                 try:
                     if estado.en_grabacion:
+                        # el USB puede volver con otro nombre (ttyUSB1 -> ttyUSB0)
+                        if estado.puerto_real.startswith("/dev/") and not os.path.exists(estado.puerto_real):
+                            estado.puerto_real = buscar_puerto_pixhawk() or estado.puerto_real
                         estado.conexion_mavlink = abrir_conexion_mavlink(estado.puerto_real)
                         estado.ultima_solicitud_stream = 0.0
                         print("[OK] Puerto de telemetria reabierto.")

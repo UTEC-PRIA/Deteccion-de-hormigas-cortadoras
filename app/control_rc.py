@@ -12,7 +12,7 @@ NOMBRES = (["FLTMODE_CH"] + [f"FLTMODE{i}" for i in range(1, 7)] + [f"CH{i}_OPT"
            + ["RCMAP_ROLL", "RCMAP_PITCH", "RCMAP_THROTTLE", "RCMAP_YAW", "TUNE", "FS_THR_ENABLE", "FS_THR_VALUE"]
            + [f"RC{i}_{s}" for i in range(1, 5) for s in ("MIN", "MAX", "REVERSED")])
 R = {"canales": None, "t": 0.0, "modo": None, "armado": None, "rc_ok": None, "params": {}, "leido": None, "error": None,
-     "pos": None, "pos_t": 0.0, "fix": 0, "sats": 0, "hdop": None}
+     "pos": None, "pos_t": 0.0, "fix": 0, "sats": 0, "hdop": None, "rumbo": None, "alt": None, "vel": None, "volt": None}
 _pedido = [0.0]          # ultima consulta de la pagina
 _hilo = [None]
 _lk = threading.Lock()
@@ -22,9 +22,9 @@ def _mensaje(m):
     if t == "HEARTBEAT": R.update(modo=pv.MODOS.get(m.custom_mode, f"MODO_{m.custom_mode}"), armado=bool(m.base_mode & 128))
     elif t == "RC_CHANNELS": R.update(canales=[getattr(m, f"chan{i}_raw") for i in range(1, m.chancount + 1) if i <= 18], t=time.time())
     elif t == "GLOBAL_POSITION_INT":
-        if m.lat or m.lon: R.update(pos=[m.lat / 1e7, m.lon / 1e7], pos_t=time.time())
+        if m.lat or m.lon: R.update(pos=[m.lat / 1e7, m.lon / 1e7], pos_t=time.time(), alt=m.relative_alt / 1000, vel=(m.vx ** 2 + m.vy ** 2) ** 0.5 / 100, rumbo=m.hdg / 100 if m.hdg < 65535 else None)
     elif t == "GPS_RAW_INT": R.update(fix=m.fix_type, sats=m.satellites_visible, hdop=m.eph / 100 if m.eph < 65535 else None)
-    elif t == "SYS_STATUS": R["rc_ok"] = bool(m.onboard_control_sensors_health & pv.ML.MAV_SYS_STATUS_SENSOR_RC_RECEIVER)
+    elif t == "SYS_STATUS": R["volt"], R["rc_ok"] = m.voltage_battery / 1000, bool(m.onboard_control_sensors_health & pv.ML.MAV_SYS_STATUS_SENSOR_RC_RECEIVER)
     elif t == "PARAM_VALUE" and m.param_id in NOMBRES:
         R["params"][m.param_id] = m.param_value; R["leido"] = time.strftime("%H:%M:%S")
 
