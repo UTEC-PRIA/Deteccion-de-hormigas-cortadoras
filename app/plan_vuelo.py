@@ -23,7 +23,7 @@ class _Puerto:
 PUERTO_LOCK = _Puerto()
 router = APIRouter()
 ML = mavutil.mavlink
-LIM = {"alt_min": 3.0, "alt_max": 8.0, "vel_min": 0.3, "vel_ref": 0.4, "vel_max": 0.8, "wpnav_max": 100.0, "radio_max": 200.0, "tramo_max": 100.0,
+LIM = {"alt_min": 3.0, "alt_max": 8.0, "vel_min": 0.3, "vel_ref": 0.4, "vel_max": 0.8, "wpnav_max": 100.0, "radio_max": 45.0, "tramo_max": 100.0,
        "wp_max": 50, "min_max": 6.0, "sats_min": 10, "hdop_max": 1.5}
 FINES = {"RTL": ML.MAV_CMD_NAV_RETURN_TO_LAUNCH, "LAND": ML.MAV_CMD_NAV_LAND, "LOITER": ML.MAV_CMD_NAV_LOITER_UNLIM}
 MODOS = {0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO", 4: "GUIDED", 5: "LOITER", 6: "RTL", 7: "CIRCLE",

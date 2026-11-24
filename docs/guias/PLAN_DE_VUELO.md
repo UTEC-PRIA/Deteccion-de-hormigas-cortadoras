@@ -17,7 +17,7 @@ Pestaña **Plan de vuelo** del dashboard. Diseña, valida, carga y verifica misi
 | Guardar, Exportar, Importar | Planes en `datos/planes/`, JSON o `.waypoints` (QGC WPL 110, Mission Planner) |
 
 La grilla rechaza las zonas en las que una pasada saldría del polígono (cóncavas): divídalas.
-El círculo rojo es una referencia de 200 m alrededor del WP1; el límite real se mide desde el dron al cargar.
+El círculo rojo es una referencia de 45 m alrededor del WP1; el límite real se mide desde el dron al cargar.
 
 ## 2. Velocidad
 Por defecto **0,4 m/s**: percentil 10 de la velocidad neta en tramos de 10 s con avance (> 0,3 m/s) del vuelo de
@@ -28,7 +28,7 @@ se **bloquea** si `WPNAV_SPEED` (o `RTL_SPEED`, si existe) supera 100 cm/s. El p
 ajústelos en Mission Planner.
 
 ## 3. Límites
-Altura 3-8 m; 2-50 puntos; tramos ≤ 100 m; radio ≤ 200 m del despegue; ≤ 6 min estimados; espera ≤ 60 s.
+Altura 3-8 m; 2-50 puntos; tramos ≤ 100 m; radio ≤ 45 m del despegue (geocerca a 50 m); ≤ 6 min estimados; espera ≤ 60 s.
 A 0,4 m/s, 6 min equivalen a unos 120 m de recorrido. **No detecta obstáculos ni relieve.**
 
 ## 4. Uso

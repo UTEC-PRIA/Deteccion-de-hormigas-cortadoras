@@ -37,7 +37,7 @@ function prim(){const p=FJ||PD;if(!act()||!p)return;const i=W.findIndex(w=>w.des
 const libre=()=>{if(!act()||FJ)return true;aviso();return false};
 function aviso(){const no=act()&&!FJ;$('av1').hidden=!no;if(no){$('av1t').textContent=$('fj').disabled?'Todavía no podés agregar puntos. '+$('dpt').textContent:'Para agregar puntos, primero fijá el despegue.';$('av1b').hidden=$('fj').disabled}}
 function cambia(f){const a=foto();f();prim();if(foto()!==a){undo.push(a);if(undo.length>100)undo.shift();redo=[]}dib()}
-const zl=L.polygon([],{color:'#7c3aed',weight:2,fillOpacity:.1,interactive:false}).addTo(map),ml=L.polyline([],{color:'#facc15',weight:3,dashArray:'5',interactive:false}).addTo(map),rad=L.circle([0,0],{radius:200,color:'#dc2626',weight:1,fill:false,interactive:false});
+const zl=L.polygon([],{color:'#7c3aed',weight:2,fillOpacity:.1,interactive:false}).addTo(map),ml=L.polyline([],{color:'#facc15',weight:3,dashArray:'5',interactive:false}).addTo(map),rad=L.circle([0,0],{radius:45,color:'#dc2626',weight:1,fill:false,interactive:false});
 const AY={add:'Clic en el mapa agrega un punto. Arrastra los puntos para moverlos; clic en la línea inserta uno.',mov:'Mueve el mapa sin agregar puntos.',zona:'Clic marca los vértices de la zona; luego abre "Grilla" y genera.',casa:'Clic en el lugar de despegue.',med:'Clic en puntos para medir; cambiar de herramienta borra la medida.'};
 function usa(m){herr=m;document.querySelectorAll('[data-h]').forEach(b=>b.className=b.dataset.h===m?'':'g');$('ay').textContent=AY[m];if(m!=='med'){med=[];ml.setLatLngs([])}}
 document.querySelectorAll('[data-h]').forEach(b=>b.onclick=()=>usa(b.dataset.h));
