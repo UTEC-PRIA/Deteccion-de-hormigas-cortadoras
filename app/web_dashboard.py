@@ -102,6 +102,7 @@ class EstadoSistema:
         self.gopro_grabando = False
         self.fotos_previas = set()
         self.intervalo_fotos_seg = 1.0
+        self.gopro_config = []
 
         # Proceso post-vuelo
         self.estado_proceso = "LISTO"
@@ -170,33 +171,80 @@ def registrar_medios_previos(ip):
     estado.snapshot_medios_tomado = True
     return len(estado.fotos_previas)
 
-def configurar_gopro_video_4k30(ip):
+# Calidad maxima de video para la GoPro HERO13 Black (ajustes de la API Open GoPro).
+# Cada ajuste lleva sus opciones en orden de preferencia: si la camara rechaza la
+# primera (HTTP 403 por combinacion no permitida) se prueba la siguiente.
+# El orden importa: Controles Pro habilita bitrate/bits/perfil y la resolucion
+# limita los lentes disponibles.
+CALIDAD_MAXIMA_GOPRO = [
+    (175, [1],     "Controles",            {1: "Pro"}),
+    (2,   [100, 1], "Resolucion",          {100: "5.3K (5312x2988)", 1: "4K (3840x2160)"}),
+    (3,   [8],     "Cuadros por segundo",  {8: "30 fps"}),
+    (121, [4, 0],  "Lente",                {4: "Linear (sin ojo de pez)", 0: "Wide"}),
+    (135, [0],     "Estabilizacion",       {0: "Apagada (sin recorte)"}),
+    (182, [1],     "Bitrate",              {1: "Alto (~120 Mbps)"}),
+    (183, [2],     "Profundidad de color", {2: "10 bits"}),
+    (184, [0],     "Perfil de color",      {0: "Estandar (sin LOG)"}),
+]
+
+def configurar_gopro_maxima_calidad(ip):
     """
-    Configura la GoPro HERO13 en modo Video a 4K 30 FPS de forma automatica:
-    - Grupo Preset 1000: Video
-    - Ajuste 2 (Resolucion) = 1: 4K (3840x2160)
-    - Ajuste 3 (Tasa de cuadros) = 8: 30 FPS
+    Pone la GoPro en modo Video con la maxima calidad y comprueba, leyendo el
+    estado de la camara, que cada ajuste quedo aplicado.
+    Devuelve (todo_ok, reporte) con una fila por ajuste: nombre, valor, ok.
     """
+    base = f"http://{ip}:8080/gopro/camera"
+    reporte = []
     try:
-        requests.get(f"http://{ip}:8080/gopro/camera/control/wired_usb?p=1", timeout=1.5)
-        requests.get(f"http://{ip}:8080/gopro/camera/presets/set_group?id=1000", timeout=1.5)
-        requests.get(f"http://{ip}:8080/gopro/camera/setting?setting=2&option=1", timeout=1.5)
-        requests.get(f"http://{ip}:8080/gopro/camera/setting?setting=3&option=8", timeout=1.5)
-        return True
-    except Exception:
-        return False
+        requests.get(f"{base}/control/wired_usb?p=1", timeout=2)
+        requests.get(f"{base}/presets/set_group?id=1000", timeout=2)
+        time.sleep(0.5)
+        for ajuste, opciones, nombre, textos in CALIDAD_MAXIMA_GOPRO:
+            elegida = None
+            for op in opciones:
+                try:
+                    r = requests.get(f"{base}/setting?setting={ajuste}&option={op}", timeout=3)
+                    if r.status_code == 200:
+                        elegida = op
+                        break
+                except requests.RequestException:
+                    pass
+                time.sleep(0.2)
+            reporte.append({"id": ajuste, "nombre": nombre, "opcion": elegida,
+                            "valor": textos.get(elegida, "rechazado por la camara"),
+                            "ok": elegida == opciones[0]})
+            time.sleep(0.3)  # la camara necesita un momento entre ajustes
+
+        # Verificacion final contra el estado real de la camara
+        r = requests.get(f"{base}/state", timeout=3)
+        actuales = r.json().get("settings", {}) if r.status_code == 200 else {}
+        for fila in reporte:
+            real = actuales.get(str(fila["id"]))
+            if real is not None and real != fila["opcion"]:
+                fila["ok"] = False
+                fila["valor"] = f"no quedo aplicado (camara en opcion {real})"
+    except Exception as e:
+        reporte.append({"id": None, "nombre": "Comunicacion", "opcion": None,
+                        "valor": f"error: {e}", "ok": False})
+    estado.gopro_config = reporte
+    return all(f["ok"] for f in reporte), reporte
+
+def resumen_config(reporte):
+    if not reporte:
+        return "sin configurar"
+    fallas = [f"{f['nombre']}: {f['valor']}" for f in reporte if not f["ok"]]
+    return "calidad maxima aplicada" if not fallas else "ATENCION " + "; ".join(fallas)
 
 def activar_shutter_gopro(ip, iniciar=True):
     """
     Envia la orden de iniciar/detener grabacion a la GoPro y VERIFICA
     activamente contra el sensor interno de la camara (status 10).
-    Siempre asegura que la camara este configurada en 4K 30 FPS antes de iniciar.
+    Antes de iniciar aplica la configuracion de calidad maxima.
     """
     try:
-        # Asegurar control por cable USB activo y modo 4K 30fps si va a iniciar
         requests.get(f"http://{ip}:8080/gopro/camera/control/wired_usb?p=1", timeout=2)
         if iniciar:
-            configurar_gopro_video_4k30(ip)
+            configurar_gopro_maxima_calidad(ip)
 
         endpoint = "start" if iniciar else "stop"
         r = requests.get(f"http://{ip}:8080/gopro/camera/shutter/{endpoint}", timeout=3)
@@ -211,7 +259,9 @@ def activar_shutter_gopro(ip, iniciar=True):
             if r_st.status_code == 200:
                 st = r_st.json().get("status", {}).get("10")
                 if st == objetivo:
-                    return True, "Grabacion confirmada y activa en la camara (Sensor 10 = 1, 4K 30FPS)" if iniciar else "Grabacion detenida correctamente (Sensor 10 = 0)"
+                    if iniciar:
+                        return True, f"Grabacion confirmada en la camara ({resumen_config(estado.gopro_config)})"
+                    return True, "Grabacion detenida correctamente"
 
         return False, "La orden se envio pero el sensor interno no confirmo el cambio de estado"
     except Exception as e:
@@ -420,7 +470,7 @@ async def index():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UTEC PRIA - Control de Mision y Telemetria UAV</title>
+    <title>Vuelo F450</title>
     <style>
         :root {
             --primary: #0F2942;
@@ -506,6 +556,16 @@ async def index():
         .progress-bar-container { width: 100%; height: 8px; background: #E2E8F0; border-radius: 4px; overflow: hidden; margin-top: 10px; display: none; }
         .progress-bar { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s; }
 
+        .campo { padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.88rem; width: 220px; }
+        .pasos { margin: 0 0 14px 20px; font-size: 0.88rem; color: var(--text-muted); line-height: 1.6; }
+        .btn-grande { padding: 15px 18px; font-size: 1rem; }
+        .cfg-lista { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .cfg-item { font-size: 0.78rem; padding: 4px 8px; border-radius: 10px; }
+        .cfg-ok { background: var(--success-bg); color: var(--success); }
+        .cfg-mal { background: #FEF2F2; color: var(--danger); }
+        .avanzado { margin-top: 18px; border-top: 1px solid #E2E8F0; padding-top: 12px; }
+        .avanzado summary { cursor: pointer; font-size: 0.88rem; font-weight: 600; color: var(--text-muted); }
+        .nota { font-size: 0.8rem; color: var(--text-muted); margin-top: 12px; line-height: 1.5; }
         .console-log { background: #0F172A; color: #38BDF8; font-family: monospace; font-size: 0.78rem; padding: 12px; border-radius: 6px; height: 120px; overflow-y: auto; margin-top: 15px; }
     </style>
 </head>
@@ -513,158 +573,139 @@ async def index():
     <div class="container">
         <header>
             <div>
-                <h1>UTEC PRIA | Centro de Control y Telemetria UAV</h1>
-                <p>Cuadricoptero F450 + GoPro HERO13 Black | Formato DJI Mini 2 SE</p>
+                <h1>Vuelo F450 + GoPro HERO13</h1>
+                <p>Deteccion de hormigas cortadoras | UTEC PRIA</p>
             </div>
             <div>
                 <span id="badge-estado" class="badge-status">Inactivo</span>
             </div>
         </header>
 
-        <!-- BANNER DE AUTOESCANEO ACTIVO DE HARDWARE -->
+        <!-- ESTADO DEL EQUIPO -->
         <div class="scan-banner" id="banner-autoescaneo">
             <div class="scan-header">
                 <div>
-                    <div class="scan-title" id="txt-scan-titulo">Autoescaneo de Hardware en Curso...</div>
-                    <div style="font-size: 0.82rem; color: var(--text-muted);" id="txt-scan-sub">Comprobando radio 915 MHz, bateria LiPo 3S y conexion USB de GoPro...</div>
+                    <div class="scan-title" id="txt-scan-titulo">Revisando equipo...</div>
+                    <div style="font-size: 0.82rem; color: var(--text-muted);" id="txt-scan-sub">Radio 915 MHz, bateria del dron y GoPro por USB</div>
                 </div>
                 <div>
-                    <button class="scan-btn" id="btn-scan" onclick="ejecutarAutoescaneo()">Re-Escanear Todo</button>
+                    <button class="scan-btn" id="btn-scan" onclick="ejecutarAutoescaneo()">Revisar de nuevo</button>
                 </div>
             </div>
             <div class="scan-grid">
                 <div class="scan-item">
-                    <div class="scan-item-lbl">Radio de Telemetria 915 MHz</div>
-                    <div class="scan-item-val" id="scan-val-radio">Escaneando...</div>
-                    <div class="scan-item-sub" id="scan-sub-radio">Verificando paquetes MAVLink</div>
+                    <div class="scan-item-lbl">Radio / Pixhawk</div>
+                    <div class="scan-item-val" id="scan-val-radio">Buscando...</div>
+                    <div class="scan-item-sub" id="scan-sub-radio">Esperando paquetes MAVLink</div>
                 </div>
                 <div class="scan-item">
-                    <div class="scan-item-lbl">Bateria Dron (LiPo 3S)</div>
-                    <div class="scan-item-val" id="scan-val-bat">Leyendo...</div>
-                    <div class="scan-item-sub" id="scan-sub-bat">Sensor analogo Pixhawk</div>
+                    <div class="scan-item-lbl">Bateria del dron (LiPo 3S)</div>
+                    <div class="scan-item-val" id="scan-val-bat">--</div>
+                    <div class="scan-item-sub" id="scan-sub-bat">Sin lectura</div>
                 </div>
                 <div class="scan-item">
-                    <div class="scan-item-lbl">Camara GoPro HERO13</div>
-                    <div class="scan-item-val" id="scan-val-gopro">Escaneando...</div>
-                    <div class="scan-item-sub" id="scan-sub-gopro">IP y control por cable USB</div>
+                    <div class="scan-item-lbl">GoPro HERO13</div>
+                    <div class="scan-item-val" id="scan-val-gopro">Buscando...</div>
+                    <div class="scan-item-sub" id="scan-sub-gopro">Conecte el cable USB</div>
                 </div>
             </div>
         </div>
 
-        <div class="grid">
-            <!-- TARJETA 1: PRE-VUELO -->
-            <div class="card">
-                <h2>1. Verificacion Pre-Vuelo y Camara GoPro</h2>
+        <!-- VUELO -->
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>Vuelo</h2>
+            <ol class="pasos">
+                <li>Conecte la GoPro a la PC por USB y encienda el dron.</li>
+                <li>Presione <b>Comenzar vuelo</b>: configura la camara en calidad maxima, sincroniza la hora y empieza a grabar.</li>
+                <li>Desconecte el cable y vuele.</li>
+                <li>Al aterrizar, conecte el cable y presione <b>Finalizar y procesar</b>.</li>
+            </ol>
+
+            <div class="status-row">
+                <span class="status-label">Nombre del vuelo:</span>
+                <input type="text" id="input-mision" value="Vuelo_Campo_01" class="campo">
+            </div>
+            <div class="status-row">
+                <span class="status-label">Calidad de video:</span>
+                <span class="status-value">Maxima: 5.3K, 30 fps, 10 bits, bitrate alto, lente Linear, color Estandar</span>
+            </div>
+            <div id="cfg-camara" class="cfg-lista"></div>
+
+            <div class="btn-group">
+                <button id="btn-iniciar" class="btn-success btn-grande" onclick="iniciarGrabacion()">Comenzar vuelo</button>
+                <button id="btn-finalizar" class="btn-danger btn-grande" onclick="finalizarYProcesar()" disabled>Finalizar y procesar</button>
+            </div>
+
+            <div class="progress-bar-container" id="bar-container">
+                <div class="progress-bar" id="prog-bar"></div>
+            </div>
+            <div id="msg-proceso" class="alert-box"></div>
+
+            <details class="avanzado">
+                <summary>Opciones avanzadas</summary>
                 <div class="status-row">
-                    <span class="status-label">Camara GoPro (Red USB):</span>
-                    <span id="txt-gopro-status" class="status-value val-bad">Desconectada</span>
+                    <span class="status-label">Puerto de telemetria:</span>
+                    <select id="sel-puerto" class="campo">
+                        <option value="AUTO">Deteccion automatica</option>
+                    </select>
                 </div>
                 <div class="status-row">
-                    <span class="status-label">Bateria Interna de Camara:</span>
-                    <span id="txt-gopro-batt" class="status-value">--</span>
+                    <span class="status-label">Fotos a extraer del video:</span>
+                    <select id="sel-intervalo" class="campo">
+                        <option value="1.0" selected>1 foto por segundo</option>
+                        <option value="0.5">2 fotos por segundo</option>
+                        <option value="2.0">1 foto cada 2 segundos</option>
+                    </select>
                 </div>
-                <div class="status-row">
-                    <span class="status-label">Estado Grabacion Camara:</span>
-                    <span id="txt-gopro-rec" class="badge-cam-idle">EN ESPERA (STANDBY)</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Radio Telemetria / Pixhawk:</span>
-                    <span id="txt-pix-status" class="status-value val-warn">Buscando radio...</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Bateria Dron (LiPo 3S):</span>
-                    <span id="txt-dron-batt" class="status-value">0.0 V (0%)</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Satelites GPS Pixhawk:</span>
-                    <span id="txt-pix-sats" class="status-value">0 satelites</span>
-                </div>
-                
                 <div class="btn-group">
-                    <button id="btn-sync" class="btn-primary" onclick="sincronizarRelojes()">Sincronizar Relojes</button>
-                    <button id="btn-cam-rec-start" class="btn-cam-start" onclick="iniciarGrabacionCamara()">Grabar Camara</button>
-                    <button id="btn-cam-rec-stop" class="btn-cam-stop" onclick="detenerGrabacionCamara()">Detener Camara</button>
+                    <button id="btn-config" class="btn-primary" onclick="configurarCamara()">Aplicar calidad maxima</button>
+                    <button id="btn-sync" class="btn-secondary" onclick="sincronizarRelojes()">Sincronizar hora</button>
+                    <button id="btn-cam-rec-start" class="btn-cam-start" onclick="iniciarGrabacionCamara()">Grabar camara</button>
+                    <button id="btn-cam-rec-stop" class="btn-cam-stop" onclick="detenerGrabacionCamara()">Detener camara</button>
                 </div>
                 <div id="msg-sync" class="alert-box"></div>
-            </div>
-
-            <!-- TARJETA 2: CONTROL DE MISION -->
-            <div class="card">
-                <h2>2. Control de Mision y Grabacion de Vuelo</h2>
-                <div class="status-row">
-                    <span class="status-label">Nombre de Mision:</span>
-                    <input type="text" id="input-mision" value="Vuelo_Campo_01" style="padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.88rem; width: 180px;">
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Puerto Telemetria (915 MHz):</span>
-                    <select id="sel-puerto" style="padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; width: 180px;">
-                        <option value="AUTO">Deteccion Automatica</option>
-                    </select>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Fotos desde Video 4K:</span>
-                    <select id="sel-intervalo" style="padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; width: 180px;">
-                        <option value="1.0" selected>1 foto / seg (90% solape)</option>
-                        <option value="0.5">2 fotos / seg (Alta densidad)</option>
-                        <option value="2.0">1 foto cada 2 seg (Baja densidad)</option>
-                    </select>
-                </div>
-                
-                <div class="btn-group">
-                    <button id="btn-iniciar" class="btn-success" onclick="iniciarGrabacion()">Comenzar Grabacion</button>
-                    <button id="btn-finalizar" class="btn-danger" onclick="finalizarYProcesar()" disabled>Finalizar y Procesar</button>
-                </div>
-
-                <div class="progress-bar-container" id="bar-container">
-                    <div class="progress-bar" id="prog-bar"></div>
-                </div>
-                <div id="msg-proceso" class="alert-box"></div>
-            </div>
+                <p class="nota">Ajustes que la camara no permite cambiar por USB (hagalos una vez en la GoPro, menu Protune):
+                nitidez <b>Alta</b>, obturador <b>1/480 o mas rapido</b> con sol (o Auto), ISO maximo <b>800</b>.</p>
+            </details>
         </div>
 
-        <!-- TARJETA 3: TELEMETRIA EN TIEMPO REAL -->
+        <!-- TELEMETRIA EN VIVO -->
         <div class="card">
-            <h2>3. Telemetria de Vuelo en Vivo</h2>
+            <h2>Telemetria en vivo</h2>
             <div class="metrics-grid">
                 <div class="metric-box">
-                    <div class="metric-label">Altura Relativa</div>
+                    <div class="metric-label">Altura</div>
                     <div class="metric-val" id="met-alt-rel">0.0 m</div>
                     <div class="metric-sub">Sobre el despegue</div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-label">Modo de Vuelo</div>
+                    <div class="metric-label">Modo</div>
                     <div class="metric-val" id="met-modo">--</div>
-                    <div class="metric-sub">ArduCopter</div>
+                    <div class="metric-sub" id="met-sats">0 satelites</div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-label">Bateria Dron</div>
+                    <div class="metric-label">Bateria</div>
                     <div class="metric-val" id="met-bat">0.0 V</div>
-                    <div class="metric-sub" id="met-bat-sub">LiPo 3S (Alarma: &lt;10.5V)</div>
+                    <div class="metric-sub">Alarma: &lt;10.5 V</div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-label">Registros Guardados</div>
+                    <div class="metric-label">Registros</div>
                     <div class="metric-val" id="met-regs">0</div>
                     <div class="metric-sub">telemetria.csv</div>
                 </div>
             </div>
-
             <div class="status-row">
-                <span class="status-label">Posicion Geografica:</span>
+                <span class="status-label">Posicion:</span>
                 <span id="met-coords" class="status-value">Lat: 0.000000 | Lon: 0.000000</span>
             </div>
             <div class="status-row">
-                <span class="status-label">Altitud Absoluta (MSL):</span>
-                <span id="met-alt-msl" class="status-value">0.0 m</span>
-            </div>
-            <div class="status-row">
-                <span class="status-label">Orientacion y Velocidad:</span>
+                <span class="status-label">Rumbo y velocidad:</span>
                 <span id="met-rumbo-vel" class="status-value">Rumbo: 0.0° | Vel: 0.0 m/s</span>
             </div>
         </div>
 
-        <!-- TERMINAL DE REGISTRO EN VIVO -->
         <div class="console-log" id="consola-log">
-            [SISTEMA] Dashboard iniciado. Ejecutando autoescaneo previo de hardware...
+            [SISTEMA] Panel iniciado. Revisando equipo...
         </div>
     </div>
 
@@ -680,99 +721,60 @@ async def index():
 
         function calcularPorcentaje3S(v) {
             if (v <= 0) return 0;
-            // Rango seguro LiPo 3S: 10.5V (0%) a 12.6V (100%)
             const pct = Math.round(((v - 10.5) / (12.6 - 10.5)) * 100);
             return Math.max(0, Math.min(100, pct));
         }
 
+        function pintar(id, texto, clase) {
+            const el = document.getElementById(id);
+            el.innerText = texto;
+            if (clase) el.className = "scan-item-val " + clase;
+        }
+
+        function mostrarConfig(reporte) {
+            const el = document.getElementById("cfg-camara");
+            if (!reporte || !reporte.length) { el.innerHTML = ""; return; }
+            el.innerHTML = reporte.map(f =>
+                `<span class="cfg-item ${f.ok ? 'cfg-ok' : 'cfg-mal'}">${f.ok ? '✓' : '✗'} ${f.nombre}: ${f.valor}</span>`
+            ).join("");
+            const fallas = reporte.filter(f => !f.ok);
+            if (fallas.length) logMsg(`[CAMARA] Ajustes no aplicados: ${fallas.map(f => f.nombre).join(", ")}`);
+            else logMsg("[CAMARA] Calidad maxima aplicada y verificada en la camara.");
+        }
+
         async function ejecutarAutoescaneo() {
             const btnScan = document.getElementById("btn-scan");
-            if (btnScan) {
-                btnScan.disabled = true;
-                btnScan.innerText = "Escaneando...";
-            }
-            logMsg("[AUTOESCANEO] Iniciando comprobacion activa de radio 915 MHz, bateria y GoPro...");
-            document.getElementById("txt-scan-titulo").innerText = "Autoescaneo en curso...";
-            document.getElementById("txt-scan-sub").innerText = "Probando comunicacion serie y enlace USB...";
-
+            btnScan.disabled = true;
+            btnScan.innerText = "Revisando...";
+            document.getElementById("txt-scan-titulo").innerText = "Revisando equipo...";
             try {
                 const r = await fetch("/api/scan_all");
                 const d = await r.json();
                 ultimoAutoescaneo = d;
-
+                const t = d.telemetria;
+                if (t.conectada) {
+                    pintar("scan-val-radio", `OK en ${t.puerto}`, (t.avisos || []).length ? "val-warn" : "val-ok");
+                    document.getElementById("scan-sub-radio").innerText =
+                        [`Modo ${t.modo}`, `${t.satelites} satelites`, ...(t.avisos || [])].join(" | ");
+                    (t.avisos || []).forEach(a => logMsg(`[AVISO DRON] ${a}`));
+                } else {
+                    pintar("scan-val-radio", "Sin senal", "val-bad");
+                    document.getElementById("scan-sub-radio").innerText = "Encienda el dron y conecte la radio 915 MHz";
+                }
                 const tEl = document.getElementById("txt-scan-titulo");
-                const sEl = document.getElementById("txt-scan-sub");
-
-                // 1. Radio Telemetria
-                const rVal = document.getElementById("scan-val-radio");
-                const rSub = document.getElementById("scan-sub-radio");
-                if (d.telemetria.conectada) {
-                    rVal.innerText = `${d.telemetria.puerto} (${d.telemetria.paquetes} paq/s)`;
-                    rVal.className = "scan-item-val val-ok";
-                    rSub.innerText = `Modo: ${d.telemetria.modo} | ${d.telemetria.satelites} sats`;
-                    (d.telemetria.avisos || []).forEach(a => { rSub.innerText += ` | ${a}`; rVal.className = "scan-item-val val-warn"; logMsg(`[AVISO DRON] ${a}`); });
+                if (t.conectada && d.gopro.conectada) {
+                    tEl.innerText = "Equipo listo"; tEl.style.color = "var(--success)";
                 } else {
-                    rVal.innerText = "Sin Senal MAVLink";
-                    rVal.className = "scan-item-val val-bad";
-                    rSub.innerText = "Verifique dron encendido y antena 915 MHz";
-                }
-
-                // 2. Bateria LiPo 3S
-                const bVal = document.getElementById("scan-val-bat");
-                const bSub = document.getElementById("scan-sub-bat");
-                const vBat = d.telemetria.bateria_v || 0;
-                if (vBat > 9.0) {
-                    const pct = calcularPorcentaje3S(vBat);
-                    bVal.innerText = `${vBat.toFixed(2)} V (${pct}%)`;
-                    bVal.className = vBat >= 11.4 ? "scan-item-val val-ok" : (vBat >= 10.5 ? "scan-item-val val-warn" : "scan-item-val val-bad");
-                    bSub.innerText = vBat >= 11.4 ? "LiPo 3S Optima (Rango Seguro)" : "Bateria 3S Baja (<11.4V)";
-                } else {
-                    bVal.innerText = "0.0 V";
-                    bVal.className = "scan-item-val val-warn";
-                    bSub.innerText = "Sin lectura de voltaje";
-                }
-
-                // 3. GoPro HERO13
-                const gVal = document.getElementById("scan-val-gopro");
-                const gSub = document.getElementById("scan-sub-gopro");
-                if (d.gopro.conectada) {
-                    gVal.innerText = `Conectada (${d.gopro.bateria}%)`;
-                    gVal.className = "scan-item-val val-ok";
-                    const recTxt = d.gopro.grabando ? "GRABANDO ACTIVA" : "En Espera (Listo)";
-                    gSub.innerText = `IP: ${d.gopro.ip} | ${recTxt}`;
-                } else {
-                    if (d.gopro.grabando) {
-                        gVal.innerText = "Sin cable (no verificable)";
-                        gVal.className = "scan-item-val val-ok";
-                        gSub.innerText = "Autonoma en SD con bateria interna";
-                    } else {
-                        gVal.innerText = "Desconectada";
-                        gVal.className = "scan-item-val val-warn";
-                        gSub.innerText = "Modo autonomo (o conecte USB)";
-                    }
-                }
-
-                // Resumen Global
-                if (d.telemetria.conectada) {
-                    tEl.innerText = "Autoescaneo OK: Hardware Verificado en Vivo";
-                    tEl.style.color = "var(--success)";
-                    sEl.innerText = `Radio OK en ${d.telemetria.puerto} | Bateria: ${vBat.toFixed(1)}V | Camara: ${d.gopro.conectada ? 'USB Listo' : 'Modo Manual'}`;
-                    logMsg(`[AUTOESCANEO EXITOSO] Telemetria activa en ${d.telemetria.puerto}. Bateria: ${vBat.toFixed(2)}V. Camara: ${d.gopro.conectada ? 'OK' : 'Desconectada'}.`);
-                } else {
-                    tEl.innerText = "Autoescaneo: Esperando Senal del Dron";
+                    tEl.innerText = t.conectada ? "Falta conectar la GoPro por USB" : "Esperando senal del dron";
                     tEl.style.color = "var(--warning)";
-                    sEl.innerText = "No se recibieron paquetes de la radio 915 MHz. Verifique que el dron este encendido.";
-                    logMsg("[AUTOESCANEO ADVERTENCIA] Radio 915 MHz sin paquetes MAVLink.");
                 }
-
+                logMsg(`[REVISION] Radio: ${t.conectada ? 'OK' : 'sin senal'} | GoPro: ${d.gopro.conectada ? 'OK' : 'desconectada'}`);
                 actualizarHardware();
             } catch (e) {
-                logMsg(`[AUTOESCANEO ERROR] ${e}`);
+                logMsg(`[ERROR] ${e}`);
             } finally {
-                if (btnScan) {
-                    btnScan.disabled = false;
-                    btnScan.innerText = "Re-Escanear Todo";
-                }
+                btnScan.disabled = false;
+                btnScan.innerText = "Revisar de nuevo";
             }
         }
 
@@ -782,89 +784,54 @@ async def index():
                 const d = await r.json();
 
                 // GoPro
-                const elGpStatus = document.getElementById("txt-gopro-status");
-                const elGpBatt = document.getElementById("txt-gopro-batt");
-                const elGpRec = document.getElementById("txt-gopro-rec");
-
                 if (d.gopro_conectada) {
-                    elGpStatus.innerText = `Conectada (${d.gopro_ip})`;
-                    elGpStatus.className = "status-value val-ok";
-                    elGpBatt.innerText = `${d.gopro_bateria}%`;
-                    if (d.gopro_grabando) {
-                        elGpRec.innerText = "GRABANDO EN VIVO (Verificado)";
-                        elGpRec.className = "badge-cam-rec";
-                    } else {
-                        elGpRec.innerText = "EN ESPERA (STANDBY)";
-                        elGpRec.className = "badge-cam-idle";
-                    }
+                    pintar("scan-val-gopro", d.gopro_grabando ? "GRABANDO" : `Conectada (${d.gopro_bateria}%)`, d.gopro_grabando ? "val-bad" : "val-ok");
+                    document.getElementById("scan-sub-gopro").innerText = d.gopro_grabando ? `Bateria ${d.gopro_bateria}%` : "Lista por USB";
+                } else if (d.gopro_grabando) {
+                    pintar("scan-val-gopro", "Grabando sin cable", "val-ok");
+                    document.getElementById("scan-sub-gopro").innerText = "Verifique la luz roja de la camara";
                 } else {
-                    elGpStatus.innerText = "Desconectada (Modo Vuelo)";
-                    elGpStatus.className = "status-value val-warn";
-                    elGpBatt.innerText = "--";
-                    if (d.gopro_grabando) {
-                        elGpRec.innerText = "SIN CABLE: verifique luz roja en la camara";
-                        elGpRec.className = "badge-cam-rec";
-                    } else {
-                        elGpRec.innerText = "EN ESPERA (Desconectada)";
-                        elGpRec.className = "badge-cam-idle";
-                    }
+                    pintar("scan-val-gopro", "Desconectada", "val-warn");
+                    document.getElementById("scan-sub-gopro").innerText = "Conecte el cable USB";
                 }
 
-                // Pixhawk / Radio
-                const elPixStatus = document.getElementById("txt-pix-status");
-                const elPixSats = document.getElementById("txt-pix-sats");
-                const elDronBatt = document.getElementById("txt-dron-batt");
-
-                if (d.pixhawk_puerto) {
-                    elPixStatus.innerText = `Radio en ${d.pixhawk_puerto}`;
-                    elPixStatus.className = "status-value val-ok";
-                } else {
-                    elPixStatus.innerText = "Buscando radio...";
-                    elPixStatus.className = "status-value val-warn";
+                // Radio durante el vuelo
+                if (d.en_grabacion) {
+                    const sinSenal = d.segundos_sin_telemetria === null || d.segundos_sin_telemetria > 3;
+                    pintar("scan-val-radio", sinSenal ? "Sin senal" : "Recibiendo", sinSenal ? "val-bad" : "val-ok");
                 }
 
-                elPixSats.innerText = `${d.satelites} satelites`;
-
+                // Bateria
                 const vBat = d.bateria_dron || 0;
                 const pctBat = calcularPorcentaje3S(vBat);
+                const claseBat = vBat >= 11.4 ? "val-ok" : (vBat >= 10.5 ? "val-warn" : "val-bad");
                 if (vBat > 9.0) {
-                    elDronBatt.innerText = `${vBat.toFixed(2)} V (${pctBat}%)`;
-                    elDronBatt.className = vBat >= 11.4 ? "status-value val-ok" : (vBat >= 10.5 ? "status-value val-warn" : "status-value val-bad");
+                    pintar("scan-val-bat", `${vBat.toFixed(2)} V (${pctBat}%)`, claseBat);
+                    document.getElementById("scan-sub-bat").innerText = vBat >= 11.4 ? "Carga suficiente" : "Bateria baja";
                 } else {
-                    elDronBatt.innerText = "0.0 V (0%)";
-                    elDronBatt.className = "status-value val-warn";
+                    pintar("scan-val-bat", "--", "val-warn");
+                    document.getElementById("scan-sub-bat").innerText = "Sin lectura";
                 }
 
                 // Puertos
                 const sel = document.getElementById("sel-puerto");
                 if (d.puertos_disponibles && d.puertos_disponibles.length > 0) {
                     const actual = sel.value;
-                    sel.innerHTML = '<option value="AUTO">Deteccion Automatica</option>';
-                    d.puertos_disponibles.forEach(p => {
-                        sel.innerHTML += `<option value="${p.dev}">${p.desc}</option>`;
-                    });
+                    sel.innerHTML = '<option value="AUTO">Deteccion automatica</option>';
+                    d.puertos_disponibles.forEach(p => { sel.innerHTML += `<option value="${p.dev}">${p.desc}</option>`; });
                     sel.innerHTML += '<option value="udpin:127.0.0.1:14550">Red UDP (Mission Planner)</option>';
                     sel.value = actual;
                 }
 
-                // Grabacion
+                // Estado del vuelo
                 const badge = document.getElementById("badge-estado");
                 const btnIni = document.getElementById("btn-iniciar");
                 const btnFin = document.getElementById("btn-finalizar");
-
                 if (d.en_grabacion) {
                     const sinSenal = d.segundos_sin_telemetria === null || d.segundos_sin_telemetria > 3;
-                    if (sinSenal) {
-                        badge.innerText = d.segundos_sin_telemetria === null
-                            ? "GRABANDO - ESPERANDO SENAL DEL DRON"
-                            : `GRABANDO - SIN SENAL DEL DRON (${Math.round(d.segundos_sin_telemetria)} s)`;
-                        badge.className = "badge-status";
-                        badge.style.background = "var(--danger)";
-                    } else {
-                        badge.innerText = "GRABANDO EN VIVO";
-                        badge.className = "badge-status badge-recording";
-                        badge.style.background = "";
-                    }
+                    badge.innerText = sinSenal ? "EN VUELO - SIN SENAL DEL DRON" : "EN VUELO - GRABANDO";
+                    badge.className = sinSenal ? "badge-status" : "badge-status badge-recording";
+                    badge.style.background = sinSenal ? "var(--danger)" : "";
                     btnIni.disabled = true;
                     btnFin.disabled = false;
                 } else {
@@ -872,34 +839,25 @@ async def index():
                     badge.className = "badge-status";
                     badge.style.background = "";
                     btnIni.disabled = d.procesando;
-                    // Si el procesamiento fallo (ej. GoPro sin cable), permitir reintentar
                     btnFin.disabled = !(d.estado_proceso === "ERROR" && d.carpeta_mision);
                 }
 
                 // Metricas
                 document.getElementById("met-alt-rel").innerText = `${d.alt_rel.toFixed(1)} m`;
                 document.getElementById("met-modo").innerText = d.modo_vuelo;
-                
+                document.getElementById("met-sats").innerText = `${d.satelites} satelites`;
                 const metBat = document.getElementById("met-bat");
-                if (vBat > 9.0) {
-                    metBat.innerText = `${vBat.toFixed(1)} V (${pctBat}%)`;
-                    metBat.style.color = vBat >= 11.4 ? "var(--success)" : (vBat >= 10.5 ? "var(--warning)" : "var(--danger)");
-                } else {
-                    metBat.innerText = "0.0 V";
-                    metBat.style.color = "var(--primary)";
-                }
-
+                metBat.innerText = vBat > 9.0 ? `${vBat.toFixed(1)} V (${pctBat}%)` : "0.0 V";
+                metBat.style.color = vBat > 9.0 ? `var(--${claseBat === "val-ok" ? "success" : claseBat === "val-warn" ? "warning" : "danger"})` : "var(--primary)";
                 document.getElementById("met-regs").innerText = d.total_registros;
                 document.getElementById("met-coords").innerText = `Lat: ${d.lat.toFixed(6)} | Lon: ${d.lon.toFixed(6)}`;
-                document.getElementById("met-alt-msl").innerText = `${d.alt_msl.toFixed(1)} m`;
                 document.getElementById("met-rumbo-vel").innerText = `Rumbo: ${d.yaw.toFixed(1)}° | Vel: ${d.velocidad.toFixed(1)} m/s`;
 
-                // Progreso
+                // Procesamiento
                 const msgProc = document.getElementById("msg-proceso");
                 const barCont = document.getElementById("bar-container");
                 const bar = document.getElementById("prog-bar");
-
-                if (d.estado_proceso === "DESCARGANDO" || d.estado_proceso === "ETIQUETANDO" || d.estado_proceso === "PROCESANDO_VIDEO") {
+                if (["DESCARGANDO", "ETIQUETANDO", "PROCESANDO_VIDEO"].includes(d.estado_proceso)) {
                     msgProc.style.display = "block";
                     msgProc.className = "alert-box alert-warning";
                     msgProc.innerText = d.mensaje_proceso;
@@ -908,7 +866,11 @@ async def index():
                 } else if (d.estado_proceso === "COMPLETADO") {
                     msgProc.style.display = "block";
                     msgProc.className = "alert-box alert-success";
-                    msgProc.innerHTML = `${d.mensaje_proceso} <br><button class="btn-secondary" style="margin-top:8px; padding:6px 12px;" onclick="abrirCarpeta('${d.carpeta_mision.replace(/\\\\/g, '/')}/fotos')">Abrir Carpeta de Fotos (DJI)</button>`;
+                    msgProc.innerText = d.mensaje_proceso + " ";
+                    const b = document.createElement("button");
+                    b.className = "btn-secondary"; b.style.marginTop = "8px"; b.innerText = "Abrir carpeta de fotos";
+                    b.onclick = () => abrirCarpeta(d.carpeta_mision + "/fotos");
+                    msgProc.appendChild(b);
                     barCont.style.display = "none";
                 } else if (d.estado_proceso === "ERROR") {
                     msgProc.style.display = "block";
@@ -916,32 +878,40 @@ async def index():
                     msgProc.innerText = d.mensaje_proceso;
                     barCont.style.display = "none";
                 }
-
             } catch (e) {
                 console.error(e);
             }
         }
 
+        async function configurarCamara() {
+            const btn = document.getElementById("btn-config");
+            btn.disabled = true;
+            logMsg("[CAMARA] Aplicando calidad maxima...");
+            try {
+                const d = await (await fetch("/api/gopro/configurar", { method: "POST" })).json();
+                if (d.reporte) mostrarConfig(d.reporte);
+                else logMsg(`[CAMARA ERROR] ${d.error}`);
+            } catch (e) {
+                logMsg(`[CAMARA ERROR] ${e}`);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
         async function sincronizarRelojes() {
-            logMsg("Iniciando sincronizacion de reloj con GoPro por cable USB...");
             const btn = document.getElementById("btn-sync");
             btn.disabled = true;
             try {
-                const r = await fetch("/api/sync_clocks", { method: "POST" });
-                const d = await r.json();
+                const d = await (await fetch("/api/sync_clocks", { method: "POST" })).json();
                 const el = document.getElementById("msg-sync");
                 el.style.display = "block";
-                if (d.exito) {
-                    el.className = "alert-box alert-success";
-                    el.innerText = `Sincronizacion completada. Desfase medido camara - PC: ${d.desfase === null ? 'no disponible' : d.desfase + ' s'}. (Hora: ${d.hora})`;
-                    logMsg(`[OK] Reloj calibrado exitosamente con ${d.fuente}.`);
-                } else {
-                    el.className = "alert-box alert-warning";
-                    el.innerText = `Error: ${d.error}`;
-                    logMsg(`[ERROR] ${d.error}`);
-                }
+                el.className = d.exito ? "alert-box alert-success" : "alert-box alert-warning";
+                el.innerText = d.exito
+                    ? `Hora sincronizada (${d.hora}). Desfase camara - PC: ${d.desfase === null ? 'no disponible' : d.desfase + ' s'}.`
+                    : `Error: ${d.error}`;
+                logMsg(d.exito ? "[OK] Hora de la camara sincronizada." : `[ERROR] ${d.error}`);
             } catch (e) {
-                logMsg(`[ERROR] Fallo de comunicacion: ${e}`);
+                logMsg(`[ERROR] ${e}`);
             } finally {
                 btn.disabled = false;
                 actualizarHardware();
@@ -949,16 +919,12 @@ async def index():
         }
 
         async function iniciarGrabacionCamara() {
-            logMsg("[CAMARA] Enviando orden de inicio de grabacion por USB...");
+            logMsg("[CAMARA] Configurando calidad maxima e iniciando grabacion...");
             try {
-                const r = await fetch("/api/gopro/shutter/start", { method: "POST" });
-                const d = await r.json();
-                if (d.exito) {
-                    logMsg(`[CAMARA EXITOSO] ${d.mensaje}`);
-                } else {
-                    logMsg(`[CAMARA ERROR] ${d.error || d.mensaje}`);
-                    alert(`Error en camara: ${d.error || d.mensaje}`);
-                }
+                const d = await (await fetch("/api/gopro/shutter/start", { method: "POST" })).json();
+                if (d.reporte) mostrarConfig(d.reporte);
+                logMsg(d.exito ? `[CAMARA] ${d.mensaje}` : `[CAMARA ERROR] ${d.error || d.mensaje}`);
+                if (!d.exito) alert(`Error en camara: ${d.error || d.mensaje}`);
             } catch (e) {
                 logMsg(`[CAMARA ERROR] ${e}`);
             }
@@ -966,15 +932,9 @@ async def index():
         }
 
         async function detenerGrabacionCamara() {
-            logMsg("[CAMARA] Enviando orden de detener grabacion...");
             try {
-                const r = await fetch("/api/gopro/shutter/stop", { method: "POST" });
-                const d = await r.json();
-                if (d.exito) {
-                    logMsg(`[CAMARA OK] ${d.mensaje}`);
-                } else {
-                    logMsg(`[CAMARA ERROR] ${d.error || d.mensaje}`);
-                }
+                const d = await (await fetch("/api/gopro/shutter/stop", { method: "POST" })).json();
+                logMsg(d.exito ? `[CAMARA] ${d.mensaje}` : `[CAMARA ERROR] ${d.error || d.mensaje}`);
             } catch (e) {
                 logMsg(`[CAMARA ERROR] ${e}`);
             }
@@ -982,48 +942,50 @@ async def index():
         }
 
         async function iniciarGrabacion() {
-            // Comprobar resultado del autoescaneo previo
             if (ultimoAutoescaneo && !ultimoAutoescaneo.telemetria.conectada) {
-                const confirma = confirm(`ADVERTENCIA DE AUTOESCANEO:\n\nNo se han detectado paquetes de telemetria desde la radio 915 MHz.\nVerifique que el dron tenga la bateria LiPo 3S conectada y la radio este conectada a la PC.\n\n¿Desea forzar el inicio de todos modos?`);
-                if (!confirma) return;
+                if (!confirm("No llega senal del dron por la radio 915 MHz.\\n\\n¿Comenzar de todos modos?")) return;
             }
-
-            const mision = document.getElementById("input-mision").value.trim() || "Mision_Vuelo";
+            if (ultimoAutoescaneo && !ultimoAutoescaneo.gopro.conectada) {
+                if (!confirm("La GoPro no esta conectada por USB: no se podra configurar la calidad ni iniciar la grabacion.\\n\\n¿Comenzar de todos modos?")) return;
+            }
+            const btn = document.getElementById("btn-iniciar");
+            btn.disabled = true;
+            const mision = document.getElementById("input-mision").value.trim() || "Vuelo";
             const puerto = document.getElementById("sel-puerto").value;
             const intervalo = parseFloat(document.getElementById("sel-intervalo").value) || 1.0;
-            logMsg(`Iniciando mision: ${mision} (Extraccion: ${intervalo} s/foto)...`);
-
-            const r = await fetch("/api/flight/start", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mision: mision, puerto: puerto, intervalo: intervalo })
-            });
-            const d = await r.json();
-            if (d.exito) {
-                logMsg(`[+] Telemetria iniciada en ${d.puerto}.`);
-                if (d.advertencia) {
-                    logMsg(`[AVISO] ${d.advertencia}`);
-                    alert(`ATENCION: ${d.advertencia}`);
+            logMsg(`Comenzando vuelo ${mision}: configurando camara y telemetria...`);
+            try {
+                const d = await (await fetch("/api/flight/start", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mision: mision, puerto: puerto, intervalo: intervalo })
+                })).json();
+                if (!d.exito) {
+                    alert(`Error al comenzar: ${d.error}`);
+                    logMsg(`[ERROR] ${d.error}`);
+                    return;
                 }
+                logMsg(`[+] Telemetria en ${d.puerto}.`);
+                if (d.hora_sincronizada) logMsg("[+] Hora de la camara sincronizada con la PC.");
+                mostrarConfig(d.gopro_config);
+                if (d.advertencia) { logMsg(`[AVISO] ${d.advertencia}`); alert(`ATENCION: ${d.advertencia}`); }
                 if (d.gopro_iniciada) {
-                    logMsg(`[+] Camara GoPro: Grabacion confirmada y activa en la camara (${d.gopro_mensaje}).`);
+                    logMsg(`[+] ${d.gopro_mensaje}`);
                 } else {
                     logMsg(`[AVISO] CAMARA NO CONFIRMADA: ${d.gopro_mensaje}`);
                     alert(`ATENCION: la camara NO esta confirmada como grabando.\\n${d.gopro_mensaje}\\nVerifiquela antes de despegar.`);
                 }
-            } else {
-                alert(`Error al iniciar: ${d.error}`);
-                logMsg(`[ERROR] No se pudo conectar a telemetria: ${d.error}`);
+            } catch (e) {
+                logMsg(`[ERROR] ${e}`);
+            } finally {
+                actualizarHardware();
             }
-            actualizarHardware();
         }
 
         async function finalizarYProcesar() {
-            if (!confirm("¿Desea finalizar la grabacion del vuelo actual y descargar/procesar las fotos de la GoPro?")) return;
-            logMsg("Deteniendo telemetria y procesando medios de la GoPro...");
-            
-            const r = await fetch("/api/flight/stop_and_process", { method: "POST" });
-            const d = await r.json();
+            if (!confirm("¿Finalizar el vuelo y descargar y procesar el video de la GoPro?")) return;
+            logMsg("Deteniendo telemetria y procesando el video...");
+            const d = await (await fetch("/api/flight/stop_and_process", { method: "POST" })).json();
             logMsg(d.mensaje || `[ERROR] ${d.error}`);
             actualizarHardware();
         }
@@ -1032,10 +994,7 @@ async def index():
             await fetch(`/api/open_folder?ruta=${encodeURIComponent(ruta)}`);
         }
 
-        // Bucle periodico de actualizacion
         setInterval(actualizarHardware, 1000);
-
-        // Ejecutar autoescaneo activo inmediatamente al abrir
         ejecutarAutoescaneo();
     </script>
     <script src="/static/pestanas.js"></script>
@@ -1164,7 +1123,7 @@ def gopro_shutter_start():
         registrar_medios_previos(ip)
     ok, msg = activar_shutter_gopro(ip, iniciar=True)
     estado.gopro_grabando = ok
-    return {"exito": ok, "mensaje": msg}
+    return {"exito": ok, "mensaje": msg, "reporte": estado.gopro_config}
 
 @app.post("/api/gopro/shutter/stop")
 def gopro_shutter_stop():
@@ -1321,13 +1280,19 @@ def _start_flight(data: dict):
     # Iniciar y verificar grabacion GoPro
     gopro_iniciada = False
     gopro_msg = "GoPro no conectada por USB"
+    hora_sincronizada = False
     ip_gp = buscar_ip_gopro()
     if ip_gp and consultar_grabacion_gopro(ip_gp):
         # Ya estaba grabando (Grabar Camara): no re-registrar medios, conservar la lista previa
         gopro_iniciada = True
-        gopro_msg = "La camara ya estaba grabando (4K 30 FPS)"
+        gopro_msg = f"La camara ya estaba grabando ({resumen_config(estado.gopro_config)})"
         estado.gopro_grabando = True
     elif ip_gp:
+        # Misma base de tiempo que la telemetria: la hora de la camara se fija con la de la PC
+        try:
+            hora_sincronizada, _ = fijar_hora_gopro(ip_gp, datetime.now())
+        except Exception:
+            hora_sincronizada = False
         # Registrar medios existentes en la camara antes de comenzar el vuelo
         registrar_medios_previos(ip_gp)
         ok, msg = activar_shutter_gopro(ip_gp, iniciar=True)
@@ -1340,6 +1305,7 @@ def _start_flight(data: dict):
     estado.hilo_telemetria = threading.Thread(target=bucle_telemetria, daemon=True)
     estado.hilo_telemetria.start()
     guardar_mision()
+    guardar_config_camara(carpeta)
 
     return {
         "exito": True,
@@ -1347,8 +1313,48 @@ def _start_flight(data: dict):
         "carpeta": carpeta,
         "gopro_iniciada": gopro_iniciada,
         "gopro_mensaje": gopro_msg,
+        "gopro_config": estado.gopro_config,
+        "hora_sincronizada": hora_sincronizada,
         "advertencia": advertencia_enlace
     }
+
+def guardar_config_camara(carpeta):
+    """Deja constancia en la carpeta del vuelo de como quedo configurada la camara."""
+    try:
+        with open(os.path.join(carpeta, "camara.json"), "w", encoding="utf-8") as f:
+            json.dump({"modelo": "GoPro HERO13 Black", "ajustes": estado.gopro_config}, f,
+                      ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[AVISO] No se pudo guardar camara.json: {e}")
+
+def revisar_calidad_video(ruta):
+    """Lee los metadatos que graba la GoPro y avisa si el video no salio en calidad maxima."""
+    try:
+        res = subprocess.run(["exiftool", "-api", "largefilesupport=1", "-j", "-n",
+                              "-GoPro:ColorMode", "-Composite:AvgBitrate", "-Track1:ImageHeight", ruta],
+                             capture_output=True, text=True, timeout=60)
+        m = json.loads(res.stdout)[0]
+    except Exception:
+        return []
+    avisos = []
+    if str(m.get("ColorMode", "")).upper() == "LOG":
+        avisos.append("grabado en color LOG (imagen gris y lavada)")
+    bitrate = m.get("AvgBitrate") or 0
+    if bitrate and bitrate < 60e6:
+        avisos.append(f"bitrate bajo ({bitrate / 1e6:.0f} Mbps)")
+    if (m.get("ImageHeight") or 9999) < 2160:
+        avisos.append(f"resolucion baja ({m.get('ImageHeight')} p)")
+    return avisos
+
+@app.post("/api/gopro/configurar")
+def gopro_configurar():
+    ip = estado.gopro_ip or buscar_ip_gopro()
+    if not ip:
+        return {"exito": False, "error": "GoPro no conectada por USB"}
+    if consultar_grabacion_gopro(ip):
+        return {"exito": False, "error": "La camara esta grabando: detengala para cambiar la configuracion"}
+    ok, reporte = configurar_gopro_maxima_calidad(ip)
+    return {"exito": ok, "reporte": reporte}
 
 def tarea_procesamiento_post_vuelo():
     try:
@@ -1419,6 +1425,7 @@ def procesar_post_vuelo():
 
         videos_descargados = []
         fotos_directas_descargadas = []
+        avisos_video = []
 
         for idx, (d, n, size) in enumerate(nuevos, 1):
             url_descarga = f"http://{ip}:8080/videos/DCIM/{d}/{n}"
@@ -1443,19 +1450,22 @@ def procesar_post_vuelo():
 
             if es_video:
                 videos_descargados.append(destino)
+                avisos_video += [f"{n}: {a}" for a in revisar_calidad_video(destino)]
             else:
                 fotos_directas_descargadas.append(destino)
 
         puntos = cargar_desde_csv(estado.ruta_csv)
         if not puntos:
             estado.mensaje_proceso = "Medios descargados, pero no se registraron puntos en telemetria.csv."
+            if avisos_video:
+                estado.mensaje_proceso += " ATENCION: " + "; ".join(avisos_video)
             estado.estado_proceso = "COMPLETADO"
             estado.progreso_porcentaje = 100
             return
 
         # 2. Extraccion de fotogramas del video 4K e inyeccion de metadatos DJI Mini 2 SE
         total_fotos_generadas = 0
-        avisos_calidad = []
+        avisos_calidad = list(avisos_video)
         if videos_descargados:
             estado.estado_proceso = "PROCESANDO_VIDEO"
             videos_descargados.sort()
@@ -1497,8 +1507,8 @@ def procesar_post_vuelo():
         estado.progreso_porcentaje = 100
         estado.estado_proceso = "COMPLETADO"
         estado.mensaje_proceso = (
-            f"Exito: {len(videos_descargados)} video(s) 4K y {total_fotos_generadas} fotografias "
-            f"etiquetadas con metadatos nativos DJI Mini 2 SE (Nadir -90°, HyperSmooth)."
+            f"Exito: {len(videos_descargados)} video(s) y {total_fotos_generadas} fotografias "
+            f"etiquetadas con metadatos DJI Mini 2 SE."
         )
         if avisos_calidad:
             estado.mensaje_proceso += " ATENCION: " + "; ".join(avisos_calidad)
