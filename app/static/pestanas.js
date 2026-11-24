@@ -42,8 +42,8 @@
   async function ir(i) {
     pans.forEach((p, k) => p.style.display = k === i ? 'block' : 'none'); [...nav.children].forEach((b, k) => b.classList.toggle('on', k === i));
     location.hash = ['', 'mapa', 'imagenes', 'plan', 'drones', 'control'][i];
-    pc.replaceChildren(); if (i === 5) { pc.append($('iframe', { src: '/static/control.html' })); return; }   // al salir se quita: libera la radio
-    if (!i) return; if (i === 3) { if (!fp.src) fp.src = '/static/plan.html'; return; } if (i === 4) { if (!fd.src) fd.src = '/static/drones.html'; return; }
+    pc.replaceChildren(); if (i === 5) { pc.append($('iframe', { src: '/static/control.html?' + Date.now() })); return; }   // al salir se quita: libera la radio
+    if (!i) return; if (i === 3) { if (!fp.src) fp.src = '/static/plan.html?' + Date.now(); return; } if (i === 4) { if (!fd.src) fd.src = '/static/drones.html'; return; }
     const g = await (await fetch('/api/vuelos_grupos')).json(), NG = { f450_gopro: 'F450 + GoPro', dji_mini2se: 'DJI Mini 2 SE' }, v = Object.values(g).flat(), act = sels[i - 1].value;
     sels.forEach(s => { s.replaceChildren(...Object.entries(g).map(([k, l]) => $('optgroup', { label: NG[k] || k }, ...l.map(n => $('option', { value: n, textContent: n }))))); s.value = v.includes(act) ? act : v[0] || ''; });
     if (sels[i - 1].value) carga[i](sels[i - 1].value);
