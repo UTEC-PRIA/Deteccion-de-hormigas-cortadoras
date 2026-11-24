@@ -27,7 +27,7 @@ def veh():
         elif y=='PARAM_REQUEST_READ':m.mav.param_value_send(x.param_id.encode(),S['par'],9,1,0)
 threading.Thread(target=veh,daemon=True).start()
 w.buscar_ip_gopro=lambda:None;pv.conexion['puerto']=lambda:U
-A=[{'lat':-32.3085,'lon':-53.8072,'alt':8},{'lat':-32.3087,'lon':-53.8072,'alt':8},{'lat':-32.3087,'lon':-53.8070,'alt':9,'espera':2}]
+A=[{'lat':-32.3085,'lon':-53.8072,'alt':8},{'lat':-32.3087,'lon':-53.8072,'alt':8},{'lat':-32.3087,'lon':-53.8070,'alt':7,'espera':2}]
 p=lambda **k:{'nombre':'t','vel':0.6,'fin':'RTL','wps':A,'confirmo':True,**k}
 def c(n,f):
     try:print(n,'->',f())

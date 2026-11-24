@@ -23,7 +23,7 @@ class _Puerto:
 PUERTO_LOCK = _Puerto()
 router = APIRouter()
 ML = mavutil.mavlink
-LIM = {"alt_min": 3.0, "alt_max": 30.0, "vel_min": 0.3, "vel_ref": 0.4, "vel_max": 0.8, "wpnav_max": 100.0, "radio_max": 200.0, "tramo_max": 100.0,
+LIM = {"alt_min": 3.0, "alt_max": 8.0, "vel_min": 0.3, "vel_ref": 0.4, "vel_max": 0.8, "wpnav_max": 100.0, "radio_max": 200.0, "tramo_max": 100.0,
        "wp_max": 50, "min_max": 6.0, "sats_min": 10, "hdop_max": 1.5}
 FINES = {"RTL": ML.MAV_CMD_NAV_RETURN_TO_LAUNCH, "LAND": ML.MAV_CMD_NAV_LAND, "LOITER": ML.MAV_CMD_NAV_LOITER_UNLIM}
 MODOS = {0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO", 4: "GUIDED", 5: "LOITER", 6: "RTL", 7: "CIRCLE",
@@ -246,6 +246,7 @@ def estado_dron(x_hormigas: str = Header("")):
     else: av.append("No se pudieron leer todos los modos.")
     if pr.get("FS_THR_ENABLE") != 1: av.append("Failsafe de control: no esta en 'RTL siempre' (o no se leyo).")
     if pr.get("FS_GCS_ENABLE") == 0: av.append("Si se pierde la radio 915, el dron SIGUE la mision.")
+    if pr.get("RTL_ALT", 0) > LIM["alt_max"] * 100: av.append(f"RTL_ALT = {pr['RTL_ALT']/100:.0f} m: el regreso sube por encima del maximo de {LIM['alt_max']:.0f} m.")
     if pr.get("FENCE_ENABLE") == 0: av.append("Geocerca desactivada.")
     if pr.get("WPNAV_SPEED", 0) > 41: av.append(f"WPNAV_SPEED = {pr['WPNAV_SPEED']:.0f} cm/s: si pausa y vuelve a AUTO, vuela a esa velocidad y no a la del plan (medido en SITL). Recomendado: 40.")
     faltan = [p for p in PARAMS if p not in pr and p not in ("RTL_SPEED", "CH7_OPT", "CH8_OPT")]   # no existe en firmware antiguo
@@ -268,6 +269,7 @@ def cargar(d: dict, x_hormigas: str = Header("")):
         try:
             L, _, pr = _leer(c, 12, True)
             e = _chequeo(L) + _velocidades(pr)
+            if pr.get("RTL_ALT", 1e9) > LIM["alt_max"] * 100: e.append(f"RTL_ALT no se leyo o supera {LIM['alt_max']:.0f} m: no se carga.")
             if not e:
                 g = L["GLOBAL_POSITION_INT"]; home = (g.lat / 1e7, g.lon / 1e7, g.alt / 1000)
                 if p["despegue"] and p["wps"]: p["wps"][0].update(lat=home[0], lon=home[1])    # punto 1 = posicion del dron
