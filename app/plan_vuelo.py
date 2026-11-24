@@ -288,8 +288,32 @@ def cargar(d: dict, x_hormigas: str = Header("")):
 def vivo():
     st = conexion["estado"]
     return {"cargado": cargado["id"], "hora": cargado["hora"], "grabando": st.en_grabacion, "armado": st.armado, "modo": st.modo_vuelo,
-            "lat": st.lat, "lon": st.lon, "alt": st.alt_rel, "wp": st.wp_actual,
+            "lat": st.lat, "lon": st.lon, "alt": st.alt_rel, "wp": st.wp_actual, "fin": fin_estado["texto"],
             "edad": round(time.time() - st.ultimo_msg_tiempo, 1) if st.ultimo_msg_tiempo else None}
+
+fin_estado = {"hecho": None, "texto": ""}
+
+def revisar_fin(R, ahora=None):
+    """Al llegar al final (item LOITER) de la mision verificada, pasa UNA vez de AUTO a LOITER.
+    Exige acelerador al centro: en LOITER la palanca manda la altura. Si no, queda quieto en AUTO."""
+    st, p, t = conexion["estado"], cargado["plan"], ahora or time.time()
+    if not (st.en_grabacion and st.armado): fin_estado.update(hecho=None, texto=""); return
+    if not (cargado["id"] and p and p["fin"] == "LOITER" and st.conexion_mavlink): return
+    if st.modo_vuelo != "AUTO" or st.wp_actual != len(p["wps"]) + 3: return
+    if not st.ultimo_msg_tiempo or t - st.ultimo_msg_tiempo > 1 or fin_estado["hecho"] == cargado["id"]: return
+    c = R["canales"]; n = int(R["params"].get("RCMAP_THROTTLE", 3)) - 1
+    if R["rc_ok"] is False or not c or len(c) <= n or t - R["t"] > 1 or not 1420 <= c[n] <= 1580:
+        fin_estado["texto"] = "MISION TERMINADA: pon el acelerador al CENTRO para pasar a LOITER."; return
+    fin_estado.update(hecho=cargado["id"], texto="Mision terminada: LOITER pedido. Baja CH8.")
+    st.conexion_mavlink.mav.set_mode_send(st.sistema_autopiloto or st.conexion_mavlink.target_system, 1, 5)
+
+def vigilar_fin(R):
+    def bucle():
+        while True:
+            try: revisar_fin(R)
+            except Exception as e: print("fin de mision:", e)
+            time.sleep(0.3)
+    threading.Thread(target=bucle, daemon=True).start()
 
 @router.post("/api/plan/modo")
 def modo(d: dict, x_hormigas: str = Header("")):

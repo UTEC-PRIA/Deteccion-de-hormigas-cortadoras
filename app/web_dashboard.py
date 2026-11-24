@@ -1568,6 +1568,7 @@ def open_folder(ruta: str):
 
 plan_vuelo.conexion.update(abrir=abrir_conexion_mavlink, puerto=buscar_puerto_pixhawk, estado=estado)
 drones.vigilar(estado, plan_vuelo.cargado)
+plan_vuelo.vigilar_fin(control_rc.R)
 
 def iniciar_servidor():
     print("=================================================================")
