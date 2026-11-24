@@ -11,7 +11,8 @@ router = APIRouter()
 NOMBRES = (["FLTMODE_CH"] + [f"FLTMODE{i}" for i in range(1, 7)] + [f"CH{i}_OPT" for i in range(7, 13)]
            + ["RCMAP_ROLL", "RCMAP_PITCH", "RCMAP_THROTTLE", "RCMAP_YAW", "TUNE", "FS_THR_ENABLE", "FS_THR_VALUE"]
            + [f"RC{i}_{s}" for i in range(1, 5) for s in ("MIN", "MAX", "REVERSED")])
-R = {"canales": None, "t": 0.0, "modo": None, "armado": None, "rc_ok": None, "params": {}, "leido": None, "error": None}
+R = {"canales": None, "t": 0.0, "modo": None, "armado": None, "rc_ok": None, "params": {}, "leido": None, "error": None,
+     "pos": None, "pos_t": 0.0, "fix": 0, "sats": 0, "hdop": None}
 _pedido = [0.0]          # ultima consulta de la pagina
 _hilo = [None]
 _lk = threading.Lock()
@@ -20,6 +21,9 @@ def _mensaje(m):
     t = m.get_type()
     if t == "HEARTBEAT": R.update(modo=pv.MODOS.get(m.custom_mode, f"MODO_{m.custom_mode}"), armado=bool(m.base_mode & 128))
     elif t == "RC_CHANNELS": R.update(canales=[getattr(m, f"chan{i}_raw") for i in range(1, m.chancount + 1) if i <= 18], t=time.time())
+    elif t == "GLOBAL_POSITION_INT":
+        if m.lat or m.lon: R.update(pos=[m.lat / 1e7, m.lon / 1e7], pos_t=time.time())
+    elif t == "GPS_RAW_INT": R.update(fix=m.fix_type, sats=m.satellites_visible, hdop=m.eph / 100 if m.eph < 65535 else None)
     elif t == "SYS_STATUS": R["rc_ok"] = bool(m.onboard_control_sensors_health & pv.ML.MAV_SYS_STATUS_SENSOR_RC_RECEIVER)
     elif t == "PARAM_VALUE" and m.param_id in NOMBRES:
         R["params"][m.param_id] = m.param_value; R["leido"] = time.strftime("%H:%M:%S")
@@ -34,7 +38,7 @@ def _leer():
         if not _activo(): return
         c = pv._conectar(todo=False)
         ts, tc = c.target_system, c.target_component
-        for s in (pv.ML.MAV_DATA_STREAM_RC_CHANNELS, pv.ML.MAV_DATA_STREAM_EXTENDED_STATUS): c.mav.request_data_stream_send(ts, tc, s, 5, 1)
+        for s in (pv.ML.MAV_DATA_STREAM_RC_CHANNELS, pv.ML.MAV_DATA_STREAM_EXTENDED_STATUS, pv.ML.MAV_DATA_STREAM_POSITION): c.mav.request_data_stream_send(ts, tc, s, 5, 1)
         R["error"] = None; faltan, k, sig, fin = list(NOMBRES), 0, 0, time.time() + 30
         while _activo():
             if faltan and time.time() > sig and time.time() < fin:
@@ -55,4 +59,6 @@ def vivo():
         with _lk:
             if not (_hilo[0] and _hilo[0].is_alive()) and not pv.PUERTO_LOCK.esperando:
                 _hilo[0] = threading.Thread(target=_leer, daemon=True); _hilo[0].start()
-    return {**R, "edad": round(time.time() - R["t"], 1) if R["t"] else None, "grabando": st.en_grabacion}
+    return {**R, "edad": round(time.time() - R["t"], 1) if R["t"] else None, "grabando": st.en_grabacion,
+            "pos_edad": round(time.time() - R["pos_t"], 1) if R["pos_t"] else None,
+            "gps_ok": R["fix"] >= 3 and R["sats"] >= pv.LIM["sats_min"] and R["hdop"] is not None and R["hdop"] <= pv.LIM["hdop_max"]}
