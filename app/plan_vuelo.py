@@ -258,7 +258,19 @@ def estado_dron(x_hormigas: str = Header("")):
             "sats": g.satellites_visible if g else None, "voltaje": s.voltage_battery / 1000 if s else None,
             "pos": [pos.lat / 1e7, pos.lon / 1e7] if pos else None}
 
+ultima_carga = {}
+
 @router.post("/api/plan/cargar")
+def api_cargar(d: dict, x_hormigas: str = Header("")):
+    """Registra cada intento de carga (hora, duracion y resultado) para poder revisarlo."""
+    t = time.time(); ultima_carga.clear(); ultima_carga.update(hora=time.strftime("%H:%M:%S"), en_curso=True)
+    try:
+        r = cargar(d, x_hormigas); ultima_carga.update(exito=r["exito"], detalle=r.get("errores") or f"{r['items']} items, id {r['id']}"); return r
+    except HTTPException as x: ultima_carga.update(exito=False, detalle=[str(x.detail)]); raise
+    except Exception as x: ultima_carga.update(exito=False, detalle=[repr(x)]); raise
+    finally:
+        ultima_carga.update(en_curso=False, segundos=round(time.time() - t, 1)); print("CARGA:", dict(ultima_carga), flush=True)
+
 def cargar(d: dict, x_hormigas: str = Header("")):
     _guardia(x_hormigas); p = normalizar(d)
     if p["dron"] != "f450": raise HTTPException(400, "Este plan es para un DJI: no se carga en la Pixhawk.")
@@ -287,7 +299,7 @@ def cargar(d: dict, x_hormigas: str = Header("")):
 @router.get("/api/plan/vivo")
 def vivo():
     st = conexion["estado"]
-    return {"cargado": cargado["id"], "hora": cargado["hora"], "grabando": st.en_grabacion, "armado": st.armado, "modo": st.modo_vuelo,
+    return {"ultima_carga": dict(ultima_carga), "cargado": cargado["id"], "hora": cargado["hora"], "grabando": st.en_grabacion, "armado": st.armado, "modo": st.modo_vuelo,
             "lat": st.lat, "lon": st.lon, "alt": st.alt_rel, "wp": st.wp_actual, "fin": fin_estado["texto"],
             "edad": round(time.time() - st.ultimo_msg_tiempo, 1) if st.ultimo_msg_tiempo else None}
 
