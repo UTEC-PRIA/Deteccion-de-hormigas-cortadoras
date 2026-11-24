@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 misiones/
 datos/vuelos/*/*/video/
+datos/vuelos/*/*/video_corregido/
 datos/vuelos/*/*/fotos/
 registros_vuelo/
 venv/
