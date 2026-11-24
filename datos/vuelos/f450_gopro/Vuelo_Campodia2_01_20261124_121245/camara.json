@@ -1,0 +1,61 @@
+{
+  "modelo": "GoPro HERO13 Black",
+  "ajustes": [
+    {
+      "id": 175,
+      "nombre": "Controles",
+      "opcion": 1,
+      "valor": "Pro",
+      "ok": true
+    },
+    {
+      "id": 2,
+      "nombre": "Resolucion",
+      "opcion": 100,
+      "valor": "5.3K (5312x2988)",
+      "ok": true
+    },
+    {
+      "id": 3,
+      "nombre": "Cuadros por segundo",
+      "opcion": 8,
+      "valor": "30 fps",
+      "ok": true
+    },
+    {
+      "id": 121,
+      "nombre": "Lente",
+      "opcion": 4,
+      "valor": "Linear (sin ojo de pez)",
+      "ok": true
+    },
+    {
+      "id": 135,
+      "nombre": "Estabilizacion",
+      "opcion": 0,
+      "valor": "Apagada (sin recorte)",
+      "ok": true
+    },
+    {
+      "id": 182,
+      "nombre": "Bitrate",
+      "opcion": 1,
+      "valor": "Alto (~120 Mbps)",
+      "ok": true
+    },
+    {
+      "id": 183,
+      "nombre": "Profundidad de color",
+      "opcion": 2,
+      "valor": "10 bits",
+      "ok": true
+    },
+    {
+      "id": 184,
+      "nombre": "Perfil de color",
+      "opcion": 0,
+      "valor": "Estandar (sin LOG)",
+      "ok": true
+    }
+  ]
+}
