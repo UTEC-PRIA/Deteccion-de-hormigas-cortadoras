@@ -28,15 +28,15 @@ se **bloquea** si `WPNAV_SPEED` (o `RTL_SPEED`, si existe) supera 100 cm/s. El p
 ajústelos en Mission Planner.
 
 ## 3. Límites
-Altura 5-30 m; 2-50 puntos; tramos ≤ 100 m; radio ≤ 200 m del despegue; ≤ 6 min estimados; espera ≤ 60 s.
+Altura 3-30 m; 2-50 puntos; tramos ≤ 100 m; radio ≤ 200 m del despegue; ≤ 6 min estimados; espera ≤ 60 s.
 A 0,4 m/s, 6 min equivalen a unos 120 m de recorrido. **No detecta obstáculos ni relieve.**
 
 ## 4. Uso
 1. Diseñar y guardar.
 2. Dron encendido y **desarmado**: *Revisar dron* (solo lectura).
 3. Confirmar obstáculos y *Cargar y verificar*: sube la misión y relee cada item.
-4. *Comenzar Grabación*; armar y despegar **con el control**; LOITER a más de 3 m.
-5. *Iniciar misión* (AUTO). Se bloquea sin RC, con menos de 10 satélites, telemetría vieja, plan distinto al cargado
+4. Armar y despegar **con el control**; LOITER a más de 3 m.
+5. *Iniciar misión* (AUTO): comienza también la grabación si no estaba activa. La GoPro sólo se inicia con el cable USB. Se bloquea sin RC, con menos de 10 satélites, telemetría vieja, plan distinto al cargado
    o dron a más de 100 m del WP1.
 
 El dashboard **nunca arma**. Cambiar la llave de modos del control interrumpe AUTO; si ya está en el modo deseado,
