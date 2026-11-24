@@ -61,6 +61,8 @@ import control_rc
 app.include_router(control_rc.router)
 import trayecto
 app.include_router(trayecto.router)
+import calibrar
+app.include_router(calibrar.router)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")), name="static")
 
 class EstadoSistema:
@@ -1005,7 +1007,7 @@ async def index():
         setInterval(actualizarHardware, 1000);
         ejecutarAutoescaneo();
     </script>
-    <script src="/static/pestanas.js?v=4"></script>
+    <script src="/static/pestanas.js?v=5"></script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
