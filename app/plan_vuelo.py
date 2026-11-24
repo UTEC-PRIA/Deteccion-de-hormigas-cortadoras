@@ -9,7 +9,18 @@ import drones, rutas
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PLANES = rutas.PLANES
-PUERTO_LOCK = threading.Lock()      # un solo usuario del puerto serie a la vez
+class _Puerto:
+    """Un solo usuario del puerto serie a la vez. 'esperando' avisa a la vista del control que debe ceder la radio."""
+    def __init__(self): self._l, self._g, self.esperando = threading.Lock(), threading.Lock(), 0
+    def acquire(self, blocking=True, timeout=-1):
+        with self._g: self.esperando += 1
+        try: return self._l.acquire(blocking, timeout)
+        finally:
+            with self._g: self.esperando -= 1
+    def release(self): self._l.release()
+    def __enter__(self): self.acquire(); return self
+    def __exit__(self, *_): self.release()
+PUERTO_LOCK = _Puerto()
 router = APIRouter()
 ML = mavutil.mavlink
 LIM = {"alt_min": 5.0, "alt_max": 30.0, "vel_min": 0.3, "vel_ref": 0.4, "vel_max": 0.8, "wpnav_max": 100.0, "radio_max": 200.0, "tramo_max": 100.0,
@@ -18,7 +29,7 @@ FINES = {"RTL": ML.MAV_CMD_NAV_RETURN_TO_LAUNCH, "LAND": ML.MAV_CMD_NAV_LAND, "L
 MODOS = {0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO", 4: "GUIDED", 5: "LOITER", 6: "RTL", 7: "CIRCLE",
          9: "LAND", 16: "POSHOLD", 17: "BRAKE"}
 PARAMS = ["FLTMODE1", "FLTMODE2", "FLTMODE3", "FLTMODE4", "FLTMODE5", "FLTMODE6", "FS_THR_ENABLE", "FS_GCS_ENABLE",
-          "RTL_ALT", "FENCE_ENABLE", "BATT_FS_LOW_ACT", "BATT_LOW_VOLT", "WPNAV_SPEED", "RTL_SPEED"]
+          "CH7_OPT", "CH8_OPT", "RTL_ALT", "FENCE_ENABLE", "BATT_FS_LOW_ACT", "BATT_LOW_VOLT", "WPNAV_SPEED", "RTL_SPEED"]
 conexion = {"abrir": None, "puerto": None, "estado": None}   # las completa web_dashboard
 cargado = {"id": None, "plan": None, "hora": None}
 
@@ -116,7 +127,7 @@ def _velocidades(pr):
     if pr.get("RTL_SPEED", 0) > t: e.append(f"RTL_SPEED = {pr['RTL_SPEED']:.0f} cm/s: bajelo a {t:.0f} o menos.")
     return e
 
-def _conectar():
+def _conectar(todo=True):
     st = conexion["estado"]
     if st.en_grabacion: raise HTTPException(409, "Hay una mision grabando: usa el puerto de la radio.")
     puerto = conexion["puerto"]()
@@ -129,7 +140,7 @@ def _conectar():
             h = m; c.target_system, c.target_component = m.get_srcSystem(), m.get_srcComponent(); break
     if not h:
         c.close(); raise HTTPException(409, "Sin senal del dron.")
-    c.mav.request_data_stream_send(c.target_system, c.target_component, 0, 4, 1)
+    if todo: c.mav.request_data_stream_send(c.target_system, c.target_component, 0, 4, 1)
     return c
 
 def _esperar(c, tipos, s):
@@ -230,14 +241,14 @@ def estado_dron(x_hormigas: str = Header("")):
     av = sorted(tx)
     modos = [MODOS.get(int(pr[f"FLTMODE{i}"]), str(int(pr[f"FLTMODE{i}"]))) for i in range(1, 7) if f"FLTMODE{i}" in pr]
     if len(modos) == 6:
-        if "AUTO" not in modos: av.append("AUTO no esta en la llave de modos: se inicia desde el dashboard.")
+        if "AUTO" not in modos and 16 not in (pr.get("CH7_OPT"), pr.get("CH8_OPT")): av.append("AUTO no esta en la llave de modos: se inicia desde el dashboard.")
         if not {"LOITER", "ALT_HOLD", "STABILIZE"} & set(modos): av.append("No hay modo manual en la llave.")
     else: av.append("No se pudieron leer todos los modos.")
     if pr.get("FS_THR_ENABLE") != 1: av.append("Failsafe de control: no esta en 'RTL siempre' (o no se leyo).")
     if pr.get("FS_GCS_ENABLE") == 0: av.append("Si se pierde la radio 915, el dron SIGUE la mision.")
     if pr.get("FENCE_ENABLE") == 0: av.append("Geocerca desactivada.")
     if pr.get("WPNAV_SPEED", 0) > 41: av.append(f"WPNAV_SPEED = {pr['WPNAV_SPEED']:.0f} cm/s: si pausa y vuelve a AUTO, vuela a esa velocidad y no a la del plan (medido en SITL). Recomendado: 40.")
-    faltan = [p for p in PARAMS if p not in pr and p != "RTL_SPEED"]   # no existe en firmware antiguo
+    faltan = [p for p in PARAMS if p not in pr and p not in ("RTL_SPEED", "CH7_OPT", "CH8_OPT")]   # no existe en firmware antiguo
     if faltan: av.append("Parametros sin leer: " + ", ".join(faltan))
     g, s = L.get("GPS_RAW_INT"), L.get("SYS_STATUS")
     if s and not s.onboard_control_sensors_enabled & 32768: av.append("Boton de seguridad activo (no arma).")

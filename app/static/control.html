@@ -1,0 +1,90 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control remoto</title><style>
+*{box-sizing:border-box}body{margin:0;padding:14px;font:14px system-ui;color:#1e293b;background:#f8fafc}
+#est{padding:10px 14px;border-radius:8px;background:#e2e8f0;font-weight:600;margin-bottom:12px}#est.ok{background:#dcfce7}#est.mal{background:#fee2e2}
+#modo{font-size:22px;font-weight:800;margin-right:14px}
+.ctl{background:#1f2937;border-radius:26px;padding:20px;color:#f1f5f9;max-width:1000px;margin:auto}
+.fila{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+.ll{background:#374151;border-radius:12px;padding:12px;flex:1 1 200px;min-width:190px;border:2px solid transparent}.ll.act{border-color:#22c55e}
+.ll h3{margin:0 0 2px;font-size:16px}.ll input{width:100%;background:#1f2937;color:#f1f5f9;border:1px solid #4b5563;border-radius:5px;padding:3px 6px;font-size:12px;margin:4px 0 8px}
+.cab{display:flex;justify-content:space-between;align-items:baseline}.pwm{font-variant-numeric:tabular-nums;color:#cbd5e1}
+.pal{display:flex;gap:10px}.ran{width:26px;height:104px;background:#111827;border-radius:13px;position:relative;flex:none}.ran i{position:absolute;left:3px;width:20px;height:20px;border-radius:50%;background:#f97316}
+.pos{flex:1;display:flex;flex-direction:column;gap:3px}.pos div{padding:4px 7px;border-radius:6px;background:#1f2937;font-size:12px;color:#cbd5e1}.pos div.on{background:#22c55e;color:#052e16;font-weight:800}.pos div.no{opacity:.45}.vis{float:right}
+.st{text-align:center}.st svg{width:190px;max-width:100%}.nota{max-width:1000px;margin:12px auto;font-size:13px}.av{background:#fffbeb;border-left:4px solid #f59e0b;padding:8px 12px;margin:6px 0}
+select{padding:4px}</style></head><body>
+<div id="est">Conectando con el dron...</div>
+<div class="ctl"><div class="fila" id="llaves"></div><div class="fila" id="sticks" style="margin-top:16px"></div></div>
+<div class="nota"><label>Palancas <select id="md"><option value="2">Modo 2 (acelerador a la izquierda)</option><option value="1">Modo 1 (acelerador a la derecha)</option></select></label>
+<div id="avs"></div><p>Solo lectura: esta pantalla no cambia nada en el dron. Verde = posición actual. ✓ = posición vista desde que abriste la página. La página no sabe qué llave física mueve cada canal: movela, mirá qué canal reacciona y escribí su nombre (se guarda en este navegador).</p></div>
+<script>
+const $ = (t, p = {}, ...h) => { const e = Object.assign(document.createElement(t), p); e.append(...h); return e; }, q = s => document.getElementById(s);
+const MODOS = {0:'STABILIZE',1:'ACRO',2:'ALT_HOLD',3:'AUTO',4:'GUIDED',5:'LOITER',6:'RTL',7:'CIRCLE',9:'LAND',11:'DRIFT',13:'SPORT',14:'FLIP',15:'AUTOTUNE',16:'POSHOLD',17:'BRAKE'};
+const OPC = {0:'Sin función',2:'FLIP',3:'Modo simple',4:'RTL (volver)',5:'Guardar trim',7:'Guardar waypoint',9:'Disparar cámara',11:'Geocerca',13:'Super simple',16:'AUTO (misión)',17:'AUTOTUNE',18:'LAND (aterrizar)',24:'Reiniciar misión',31:'PARADA DE MOTORES',32:'Interlock de motores',33:'BRAKE (frenar)',41:'ARMAR / DESARMAR',42:'SmartRTL'};
+const LIM = [0, 1231, 1361, 1491, 1621, 1750, 9999];   // umbrales de ArduCopter 3.6
+const mem = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+const vistas = {}; let firma = '';
+q('md').value = mem.get('rc_modo') || '2'; q('md').onchange = e => { mem.set('rc_modo', e.target.value); firma = ''; };
+const fnAux = v => v in OPC ? OPC[v] : `Opción ${v}`;
+
+// Posiciones de una llave: {min,max,texto,raro}
+function posiciones(n, P) {
+  if (n === P.FLTMODE_CH) return [6,5,4,3,2,1].map(i => ({ min: LIM[i-1], max: LIM[i], raro: ![1,4,6].includes(i),
+    texto: P['FLTMODE'+i] === undefined ? 'sin leer' : MODOS[P['FLTMODE'+i]] || 'Modo '+P['FLTMODE'+i] }));
+  const o = P[`CH${n}_OPT`];
+  if (n >= 7 && o === undefined) return [{ min: 0, max: 9999, texto: 'sin leer' }];
+  if (n === 6 && P.TUNE === undefined) return [{ min: 0, max: 9999, texto: 'sin leer' }];
+  const f = n === 6 ? (P.TUNE ? `Ajuste en vuelo (TUNE ${P.TUNE})` : 'Sin función') : n >= 7 ? fnAux(o) : 'Sin función';
+  if (f === 'Sin función' || n === 6) return [{ min: 1801, max: 9999, texto: 'Arriba: ' + f }, { min: 1200, max: 1801, texto: 'Medio: ' + f, raro: 1 }, { min: 0, max: 1200, texto: 'Abajo: ' + f }];
+  return [{ min: 1801, max: 9999, texto: 'Arriba: ' + f }, { min: 1200, max: 1801, texto: 'Medio: sin acción', raro: 1 },
+          { min: 0, max: 1200, texto: 'Abajo: ' + ([16,18,4,33,42].includes(o) ? `sale de ${f.split(' ')[0]}, vuelve a CH${P.FLTMODE_CH ?? '?'}` : 'apagado') }];
+}
+const ejes = P => [['ROLL','Alabeo'],['PITCH','Cabeceo'],['THROTTLE','Acelerador'],['YAW','Guiñada']].map(([k, t], i) => ({ k, t, n: P['RCMAP_'+k] ?? i+1 }));
+
+function armar(d) {
+  const P = d.params, sueltos = [], us = ejes(P).map(e => e.n);
+  for (let n = 1; n <= Math.max(8, Math.min(d.canales.length, 12)); n++) if (!us.includes(n)) sueltos.push(n);
+  q('llaves').replaceChildren(...sueltos.map(n => {
+    const pos = posiciones(n, P), nom = $('input', { placeholder: 'Nombre en mi control (ej. SwC)', value: mem.get('rc_n'+n) || '' });
+    nom.oninput = () => mem.set('rc_n'+n, nom.value);
+    const ps = $('div', { className: 'pos' }, ...pos.map((p, i) => $('div', { id: `p${n}_${i}`, className: p.raro ? 'no' : '' }, $('span', { className: 'vis', id: `v${n}_${i}` }), p.texto)));
+    const tit = n === P.FLTMODE_CH ? 'Modos de vuelo' : n >= 7 && P[`CH${n}_OPT`] ? fnAux(P[`CH${n}_OPT`]) : 'Canal auxiliar';
+    const c = $('div', { className: 'll', id: 'll'+n }, $('div', { className: 'cab' }, $('h3', { textContent: 'CH'+n }), $('span', { className: 'pwm', id: 'w'+n })), $('b', { textContent: tit }), nom,
+      $('div', { className: 'pal' }, $('div', { className: 'ran' }, $('i', { id: 'i'+n })), ps));
+    c.pos = pos; c.n = n; return c;
+  }));
+  const E = Object.fromEntries(ejes(P).map(e => [e.k, e])), m = q('md').value, pares = m === '2' ? [['YAW','THROTTLE'],['ROLL','PITCH']] : [['YAW','PITCH'],['ROLL','THROTTLE']];
+  q('sticks').replaceChildren(...pares.map(([x, y], i) => { const s = $('div', { className: 'st' });
+    s.innerHTML = `<svg viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#111827" stroke="#4b5563" stroke-width="3"/><path d="M100 14V186M14 100H186" stroke="#374151"/><circle id="s${i}" cx="100" cy="100" r="22" fill="#f97316"/></svg>`;
+    s.append($('div', { textContent: `↕ ${E[y].t} CH${E[y].n}: `, }, $('b', { id: 'y'+i }))); s.append($('div', { textContent: `↔ ${E[x].t} CH${E[x].n}: ` }, $('b', { id: 'x'+i })));
+    s.ejes = [E[x], E[y]]; return s; }));
+}
+function pintar(d) {
+  const P = d.params, C = d.canales, e = q('est'), viejo = d.edad === null || d.edad > 2, sin = d.rc_ok === false, thr = C && C[(P.RCMAP_THROTTLE ?? 3) - 1], fs = thr !== undefined && P.FS_THR_ENABLE && thr < P.FS_THR_VALUE;
+  e.className = viejo || sin || fs || !C?.length ? 'mal' : 'ok'; e.replaceChildren();
+  if (!C) { e.textContent = d.error || 'Conectando con el dron...'; return; }
+  e.append($('span', { id: 'modo', textContent: viejo ? 'SIN DATOS RECIENTES' : d.modo || '--' }), viejo ? `Último dato hace ${d.edad} s. ${d.error || ''}` : `${d.armado === null ? '' : d.armado ? '⚠ ARMADO' : 'Desarmado'} · ${sin ? 'SIN SEÑAL DEL CONTROL' : fs ? 'FAILSAFE: acelerador bajo el umbral' : 'Control: el autopiloto recibe canales'}${d.grabando ? ' · durante grabación' : ''} · configuración leída ${d.leido || 'aún no'}`);
+  const f = JSON.stringify(P) + C.length + q('md').value; if (f !== firma) { firma = f; armar(d); }
+  document.querySelector('.ctl').style.opacity = viejo ? .45 : 1;
+  for (const c of q('llaves').children) {
+    const v = C[c.n - 1], hay = v > 800 && v < 2300; q('w'+c.n).textContent = hay ? v : 'sin señal';
+    q('i'+c.n).style.bottom = hay ? Math.max(0, Math.min(1, (v-1000)/1000))*78+3+'px' : '3px';
+    c.pos.forEach((p, i) => { const on = hay && !viejo && v >= p.min && v < p.max, k = c.n+'_'+p.min; if (on) vistas[k] = 1;
+      q(`p${c.n}_${i}`).classList.toggle('on', on); q(`v${c.n}_${i}`).textContent = vistas[k] ? '✓' : ''; });
+  }
+  [...q('sticks').children].forEach((s, i) => { const val = (a, inv) => { const v = C[a.n-1], lo = P[`RC${a.n}_MIN`] ?? 1000, hi = P[`RC${a.n}_MAX`] ?? 2000; let r = Math.max(0, Math.min(1, (v-lo)/(hi-lo||1))); return inv ? 1-r : r; };
+    const [x, y] = s.ejes, vx = val(x, P[`RC${x.n}_REVERSED`]), vy = val(y, (y.k === 'PITCH') !== !!P[`RC${y.n}_REVERSED`]);   // cabeceo: adelante = PWM bajo
+    q('s'+i).setAttribute('cx', 35+vx*130); q('s'+i).setAttribute('cy', 165-vy*130); q('x'+i).textContent = C[x.n-1]; q('y'+i).textContent = C[y.n-1]; });
+  const a = [], auto = [7,8,9,10,11,12].filter(n => P[`CH${n}_OPT`] === 16);
+  for (const n of auto) a.push(`CH${n} arriba inicia AUTO sin los controles de la página. Con misión cargada y armado en el suelo, puede despegar al subir el acelerador: armá con CH${n} abajo.`);
+  if (P.FLTMODE_CH !== undefined && !auto.length && ![1,2,3,4,5,6].some(i => P['FLTMODE'+i] === 3)) a.push('Ninguna llave tiene AUTO.');
+  if (a.length) a.push('La función de una llave auxiliar se ejecuta al MOVERLA: si ya estaba arriba al encender, no actúa hasta bajarla y subirla. El modo real es el de la barra superior.');
+  q('avs').replaceChildren(...a.map(t => $('div', { className: 'av', textContent: t })));
+}
+let enCurso = false;
+async function ciclo() {
+  if (enCurso || document.hidden) return; enCurso = true;
+  try { const r = await fetch('/api/control/vivo', { signal: AbortSignal.timeout(3000) }); if (!r.ok) throw Error(r.status); pintar(await r.json()); }
+  catch (x) { q('est').className = 'mal'; q('est').textContent = 'La página perdió conexión con el programa: los valores mostrados pueden ser viejos. ' + x.message; document.querySelector('.ctl').style.opacity = .45; }
+  finally { enCurso = false; }
+}
+setInterval(ciclo, 250); ciclo();
+</script></body></html>

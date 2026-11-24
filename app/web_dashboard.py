@@ -57,6 +57,8 @@ from plan_vuelo import PUERTO_LOCK
 app.include_router(plan_vuelo.router)
 import drones
 app.include_router(drones.router)
+import control_rc
+app.include_router(control_rc.router)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")), name="static")
 
 class EstadoSistema:
@@ -379,6 +381,7 @@ def bucle_telemetria():
                 except Exception:
                     pass
 
+            control_rc._mensaje(msg)
             if mtype == 'HEARTBEAT':
                 cm = getattr(msg, 'custom_mode', 0)
                 estado.modo_vuelo = MODOS_ARDUPILOT.get(cm, f"MODO_{cm}")
@@ -997,7 +1000,7 @@ async def index():
         setInterval(actualizarHardware, 1000);
         ejecutarAutoescaneo();
     </script>
-    <script src="/static/pestanas.js"></script>
+    <script src="/static/pestanas.js?v=2"></script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
