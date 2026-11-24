@@ -1,8 +1,8 @@
 (() => {
   const cont = document.querySelector('.container'), $ = (t, p = {}, ...h) => { const e = Object.assign(document.createElement(t), p); e.append(...h); return e; };
   document.head.append($('style', { textContent: `
-  .tabs{max-width:1100px;margin:0 auto 14px;display:flex;gap:8px}.tabs button{background:#e2e8f0;color:#1e293b}.tabs button.on{background:#0f2942;color:#fff}
-  .pan{display:none}.pan select{padding:8px;margin:0 8px 10px 0}.pan iframe{width:100%;height:calc(100vh - 150px);border:1px solid #cbd5e1;border-radius:8px}
+  .tabs{max-width:1100px;margin:0 auto 8px;display:flex;gap:8px}.tabs button{background:#e2e8f0;color:#1e293b}.tabs button.on{background:#0f2942;color:#fff}
+  .pan{display:none}.pan select{padding:8px;margin:0 8px 10px 0}.pan iframe{width:100%;height:calc(100vh - 92px);border:1px solid #cbd5e1;border-radius:8px}
   .gal{display:flex;gap:14px}.gr{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:calc(100vh - 160px);overflow:auto;align-content:start}
   .gr figure{cursor:pointer;background:#fff;border:2px solid #cbd5e1;border-radius:6px;font-size:11px;padding:4px}.gr figure.no{border-color:#f59e0b}.gr img{width:100%;aspect-ratio:16/9;object-fit:cover}
   .tg{width:400px;max-height:calc(100vh - 160px);overflow:auto;font-size:12px;background:#fff;padding:10px;border:1px solid #cbd5e1}.tg img{width:100%}.tg td{padding:2px 6px;border-bottom:1px solid #eee;word-break:break-word}

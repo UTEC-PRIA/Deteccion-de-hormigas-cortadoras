@@ -1000,7 +1000,7 @@ async def index():
         setInterval(actualizarHardware, 1000);
         ejecutarAutoescaneo();
     </script>
-    <script src="/static/pestanas.js?v=3"></script>
+    <script src="/static/pestanas.js?v=4"></script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
