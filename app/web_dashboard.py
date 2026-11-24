@@ -59,6 +59,8 @@ import drones
 app.include_router(drones.router)
 import control_rc
 app.include_router(control_rc.router)
+import trayecto
+app.include_router(trayecto.router)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")), name="static")
 
 class EstadoSistema:
@@ -1572,6 +1574,7 @@ def open_folder(ruta: str):
 plan_vuelo.conexion.update(abrir=abrir_conexion_mavlink, puerto=buscar_puerto_pixhawk, estado=estado)
 drones.vigilar(estado, plan_vuelo.cargado)
 plan_vuelo.vigilar_fin(control_rc.R)
+control_rc.mantener()
 
 def iniciar_servidor():
     print("=================================================================")
