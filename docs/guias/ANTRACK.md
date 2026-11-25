@@ -1,5 +1,11 @@
 # Puente hacia AnTrack
-`app/antrack.py` deja los datos en el formato A de AnTrack (28/09/2026). No envía nada ni modifica los vuelos.
+`app/antrack.py` prepara los datos para AnTrack. No envía nada.
+
+## Uso actual: imágenes con las coordenadas del dron
+`python app/antrack.py paquete VUELO` (o `todos`) crea en `datos/salida_antrack/` uno o más ZIP de hasta 2 GB por vuelo. Cada uno trae las imágenes originales sin recomprimir,
+`imagenes.csv`, `imagenes.json` y `LEEME.txt` con el significado de cada campo. AnTrack corre la IA, filtra y arma el mapa.
+
+## Más adelante: detecciones en el formato A (28/09/2026)
 
 1. `python app/antrack.py imagenes VUELO` crea `imagenes.csv` en el vuelo: imagen, video, cuadro, fecha, hora, GPS, alturas, rumbo y gimbal, para el servidor de IA. Las imágenes se entregan a resolución original.
 2. El servidor de IA deja `detecciones.json` en la carpeta del vuelo:

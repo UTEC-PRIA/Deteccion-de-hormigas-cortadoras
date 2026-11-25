@@ -1,6 +1,7 @@
-"""Puente hacia AnTrack (formato A, 28/09/2026). No envia nada: prepara archivos.
+"""Puente hacia AnTrack. No envia nada: prepara archivos.
+  python app/antrack.py paquete VUELO|todos [SALIDA] ZIP con las imagenes originales y las coordenadas del dron (uso actual)
   python app/antrack.py imagenes VUELO              lista de imagenes con GPS para el servidor de IA (imagenes.csv)
-  python app/antrack.py exportar VUELO [SALIDA]     detecciones.json -> ZIP con pares .json + .png
+  python app/antrack.py exportar VUELO [SALIDA]     detecciones.json -> ZIP con pares .json + .png (formato A, para mas adelante)
 detecciones.json (en la carpeta del vuelo): [{"imagen": "X.JPG", "clase": "hormiguero", "confianza": 0.87, "x": 10, "y": 20, "ancho": 30, "alto": 40}]
 x, y = CENTRO del recuadro en pixeles de la imagen original. Se aceptan los nombres class, confidence, width, height.
 Guia: docs/guias/ANTRACK.md"""
@@ -60,17 +61,61 @@ def datos_imagenes(carpeta, nombres=None):
         for x in json.loads(q.stdout or "[]"): r[os.path.basename(x["SourceFile"])] = x
     return r
 
+COLS = ["id", "vuelo", "dron", "imagen", "video", "cuadro", "fecha", "hora", "latitud", "longitud", "altura_relativa", "altura_msl", "rumbo_dron", "gimbal_pitch", "gimbal_yaw", "ancho", "alto"]
+EXIF = ["GPSLatitude", "GPSLongitude", "RelativeAltitude", "AbsoluteAltitude", "FlightYawDegree", "GimbalPitchDegree", "GimbalYawDegree", "ImageWidth", "ImageHeight"]
+
+def _num(v):
+    try: v = float(v)
+    except (TypeError, ValueError): return None
+    return int(v) if v.is_integer() and abs(v) > 999 else v
+
+def filas(carpeta):
+    vuelo, dron, r = os.path.basename(carpeta), os.path.basename(os.path.dirname(carpeta)), []
+    for nom, x in sorted(datos_imagenes(carpeta).items()):
+        try: v, c = cuadro(carpeta, nom)
+        except ValueError: v, c = None, None
+        f, _, t = str(x.get("DateTimeOriginal", "")).partition(" ")
+        e = [_num(x.get(k)) for k in EXIF]
+        if dron == "dji_mini2se": e[3] = None                     # su video no graba altura sobre el mar
+        r.append(dict(zip(COLS, [f"{vuelo}__{os.path.splitext(nom)[0]}", vuelo, dron, nom, v, c, f.replace(":", "-"), t[:8], *e])))
+    return r
+
+def _csv(h, fs):
+    w = csv.DictWriter(h, COLS); w.writeheader(); w.writerows({k: "" if v is None else v for k, v in f.items()} for f in fs)
+
 def imagenes(carpeta):
-    dest = os.path.join(carpeta, "imagenes.csv"); n = 0
-    with open(dest, "w", newline="", encoding="utf-8") as h:
-        w = csv.writer(h); w.writerow(["imagen", "video", "cuadro", "fecha", "hora", "latitud", "longitud", "altura_relativa", "altura_msl", "rumbo_dron", "gimbal_pitch", "gimbal_yaw", "ancho", "alto", "camara"])
-        for nom, x in datos_imagenes(carpeta).items():
-            try: v, c = cuadro(carpeta, nom)
-            except ValueError: v, c = "", ""
-            f, _, t = str(x.get("DateTimeOriginal", "")).partition(" "); n += 1
-            w.writerow([nom, v, c, f.replace(":", "-"), t[:8], *(x.get(k, "") for k in ("GPSLatitude", "GPSLongitude", "RelativeAltitude", "AbsoluteAltitude", "FlightYawDegree",
-                                                                                     "GimbalPitchDegree", "GimbalYawDegree", "ImageWidth", "ImageHeight", "Model"))])
-    return dest, n
+    fs = filas(carpeta); dest = os.path.join(carpeta, "imagenes.csv")
+    with open(dest, "w", newline="", encoding="utf-8") as h: _csv(h, fs)
+    return dest, len(fs)
+
+LEEME = """Imagenes del vuelo a resolucion original, sin recomprimir, una carpeta 'imagenes' y sus datos en imagenes.csv / imagenes.json.
+latitud, longitud: posicion del DRON (WGS84, grados decimales), no la del objeto que se ve en la imagen.
+fecha y hora: hora de Uruguay (UTC-3). altura_relativa: metros sobre el despegue, NO sobre el suelo (puede ser negativa).
+altura_msl: metros sobre el mar; vacia si el dron no la graba. rumbo_dron, gimbal_*: grados.
+Precision: Mini 2 SE redondea la posicion a 4 decimales (unos 11 m). Los demas, GPS sin RTK (metros, sin medir).
+F450: gimbal_pitch -90 es el montaje (camara fija hacia abajo), no una medicion. Las imagenes pueden venir rotadas segun la GoPro.
+Cada ZIP se abre solo: su imagenes.csv describe las imagenes que contiene. Las imagenes sin GPS no se incluyen.
+"""
+MAX_PAQ = 2_000_000_000
+
+def paquete(carpeta, salida=SALIDA, tope=MAX_PAQ):
+    vuelo = os.path.basename(carpeta); fs = filas(carpeta); con = [f for f in fs if f["latitud"] is not None and f["longitud"] is not None and (f["latitud"] or f["longitud"])]
+    partes, peso = [], 0
+    for f in con:
+        n = os.path.getsize(os.path.join(carpeta, "fotos", f["imagen"]))
+        if not partes or peso + n > tope: partes.append([]); peso = 0
+        partes[-1].append(f); peso += n
+    os.makedirs(salida, exist_ok=True); zips = []
+    for v in os.listdir(salida):
+        if re.fullmatch(re.escape(vuelo) + r"_imagenes_\d{2}de\d{2}\.zip", v): os.remove(os.path.join(salida, v))
+    for i, p in enumerate(partes, 1):
+        z = os.path.join(salida, f"{vuelo}_imagenes_{i:02d}de{len(partes):02d}.zip")
+        with zipfile.ZipFile(z + ".part", "w", zipfile.ZIP_STORED) as h:
+            b = io.StringIO(newline=""); _csv(b, p); h.writestr("imagenes.csv", b.getvalue())
+            h.writestr("imagenes.json", json.dumps(p, ensure_ascii=False, indent=1)); h.writestr("LEEME.txt", LEEME)
+            for f in p: h.write(os.path.join(carpeta, "fotos", f["imagen"]), "imagenes/" + f["imagen"])
+        os.replace(z + ".part", z); zips.append(z)
+    return zips, len(con), len(fs) - len(con)
 
 def validar(r):
     """Reglas de AnTrack. Devuelve el motivo de rechazo o None."""
@@ -150,7 +195,11 @@ def exportar(carpeta, salida=SALIDA):
     return zips, inf
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or sys.argv[1] not in ("imagenes", "exportar"): raise SystemExit(__doc__)
+    if len(sys.argv) < 3 or sys.argv[1] not in ("imagenes", "exportar", "paquete"): raise SystemExit(__doc__)
+    if sys.argv[1] == "paquete":
+        for c in (rutas.carpetas() if sys.argv[2] == "todos" else [carpeta_vuelo(sys.argv[2])]):
+            if os.path.isdir(os.path.join(c, "fotos")): z, n, s = paquete(c, *sys.argv[3:4]); print(os.path.basename(c), f"{n} imagenes, {s} sin GPS, {len(z)} ZIP", flush=True)
+        raise SystemExit
     c = carpeta_vuelo(sys.argv[2])
     if sys.argv[1] == "imagenes": print(*imagenes(c), "imagenes")
     else:
