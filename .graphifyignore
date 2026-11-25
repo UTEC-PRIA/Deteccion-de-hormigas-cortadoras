@@ -1,0 +1,10 @@
+datos/
+.venv/
+graphify-out/
+legado/
+*.jpg
+*.JPG
+*.png
+*.pdf
+app/static/**/leaflet*
+**/leaflet*.js

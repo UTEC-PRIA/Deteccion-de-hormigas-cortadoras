@@ -14,3 +14,4 @@ datos/planes/.progreso.json
 datos/entrada_dji/*
 !datos/entrada_dji/.gitkeep
 datos/salida_antrack/
+graphify-out/
