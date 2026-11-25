@@ -4,7 +4,7 @@
 Nunca escribe en la tarjeta del dron ni envia ordenes de vuelo a un DJI."""
 import os, re, io, csv, glob, json, math, time, shutil, zipfile, threading, subprocess
 from datetime import datetime, timezone, timedelta
-import rutas
+import rutas, telemetria_djmd
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import Response
 
@@ -76,10 +76,10 @@ def listar_medios(t):
         try: h = _utc(x, v, _desfase())
         except (KeyError, ValueError): continue
         r.append({"archivo": os.path.relpath(x["SourceFile"], t), "tipo": "video" if v else "foto", "utc": h.timestamp(),
-                  "dur": x.get("Duration"), "mb": round(os.path.getsize(x["SourceFile"]) / 1e6, 1), "modelo": x.get("Model", ""), "clave": f"{os.path.basename(x['SourceFile'])}|{int(h.timestamp())}"})
+                  "dur": x.get("Duration"), "mb": round(os.path.getsize(x["SourceFile"]) / 1e6, 1), "modelo": x.get("Model", "") or (telemetria_djmd.modelo(x["SourceFile"]) if v else ""), "clave": f"{os.path.basename(x['SourceFile'])}|{int(h.timestamp())}"})
     return sorted(r, key=lambda z: z["utc"])
 
-MODELOS = {"FC7503": "mini2se"}
+MODELOS = {"FC7503": "mini2se", "FC9313": "mini5pro"}
 NUM = r"(-?\d+(?:\.\d+)?)"
 SUB = re.compile(r"GPS\s*\(\s*" + NUM + r",\s*" + NUM + r",\s*" + NUM + r"\s*\),\s*D\s*" + NUM + r"m,\s*H\s*" + NUM + r"m,\s*H\.S\s*" + NUM + r"m/s")
 CAM = re.compile(r"F/([\d.]+), SS ([\d.]+), ISO (\d+)")
@@ -97,7 +97,7 @@ def telemetria_video(ruta):
         try: r.append({"s": float(a), "lat": lat, "lon": lon, "alt": h, "vel": v, "casa": d, "gps": bool(lat or lon),
                         "cam": (lambda c: c and [float(g) for g in c.groups()])(CAM.search(txt))})
         except ValueError: continue
-    return r
+    return r or telemetria_djmd.leer(ruta)
 
 def telemetria_srt(ruta):
     """Subtitulos aparte de otros DJI: [latitude: x] [longitude: y] [rel_alt: z abs_alt: w]. Un dato por segundo."""
@@ -158,7 +158,7 @@ def _fotogramas(ruta, tel, ini, destino, cada):
     import cv2
     q = json.loads(subprocess.run(["exiftool", "-api", "largefilesupport=1", "-json", "-n", "-q", "-Model", "-CameraPitch", "-Comment", ruta], capture_output=True, text=True).stdout)[0]
     sn = re.search(r"SN=(\w+)", str(q.get("Comment", "")))
-    fijos = {"Make": "DJI", "Model": q.get("Model", "")}
+    fijos = {"Make": "DJI", "Model": q.get("Model", "") or telemetria_djmd.modelo(ruta)}
     if sn: fijos["SerialNumber"] = sn.group(1)
     if q.get("Model") == "FC7503": fijos["FocalLength"] = 4.5
     if q.get("CameraPitch") not in (None, ""): fijos["XMP-drone-dji:GimbalPitchDegree"] = f"{float(q['CameraPitch']):+.2f}"
@@ -180,9 +180,13 @@ def _fotogramas(ruta, tel, ini, destino, cada):
             x.update(FNumber=p["cam"][0], ExposureTime=1 / p["cam"][1] if p["cam"][1] else 0, ISO=int(p["cam"][2]))
         if p and p["gps"] and abs(p["s"] - s) <= 1.5:
             x.update(GPSLatitude=abs(p["lat"]), GPSLatitudeRef="S" if p["lat"] < 0 else "N", GPSLongitude=abs(p["lon"]),
-                     GPSLongitudeRef="W" if p["lon"] < 0 else "E", GPSHPositioningError=8,
+                     GPSLongitudeRef="W" if p["lon"] < 0 else "E", **({} if "msl" in p else {"GPSHPositioningError": 8}),
                      GPSDateStamp=(ini + timedelta(seconds=s)).strftime("%Y:%m:%d"), GPSTimeStamp=(ini + timedelta(seconds=s)).strftime("%H:%M:%S"))
             x["XMP-drone-dji:RelativeAltitude"] = f"{p['alt']:+.2f}"
+            if "msl" in p:
+                x.update(GPSAltitude=abs(p["msl"]), GPSAltitudeRef=int(p["msl"] < 0), ImageDescription=f"Fotograma de {os.path.basename(ruta)} a {s:.2f} s. Posicion, altura, actitud y gimbal grabados en el video.")
+                x.update({"XMP-drone-dji:AbsoluteAltitude": f"{p['msl']:+.2f}", **{"XMP-drone-dji:" + k: f"{p[z]:+.2f}" for k, z in
+                          (("FlightRollDegree", "roll"), ("FlightPitchDegree", "pitch"), ("FlightYawDegree", "yaw"), ("GimbalPitchDegree", "g_pitch"), ("GimbalRollDegree", "g_roll"), ("GimbalYawDegree", "g_yaw"))}})
         filas.append(x)
     cap.release()
     if not filas: raise RuntimeError(f"{base}: no se pudo leer el video.")
@@ -216,31 +220,38 @@ def _importar(t, arch, nombre, cada, copiar):
                 if q.get("GPSLatitude"):
                     ng += 1; filas.append([u, q["GPSLatitude"], q["GPSLongitude"], float(q.get("GPSAltitude", 0)), float(q.get("RelativeAltitude", 0)), float(q.get("FlightYawDegree", 0)), 0, "FOTO"])
                 continue
-            tel = telemetria_video(src)
-            if en_tierra(tel): fuera.append(m["clave"]); continue
+            loc = src
+            if copiar:  # se copia primero: leer del disco es mucho mas rapido que releer por USB
+                loc = os.path.join(vd, os.path.basename(src))
+                if not (os.path.exists(loc) and os.path.getsize(loc) == os.path.getsize(src)):
+                    shutil.copy2(src, loc + ".part"); os.replace(loc + ".part", loc)
+            srt = any(os.path.exists(os.path.splitext(src)[0] + e) for e in (".SRT", ".srt"))
+            tel = telemetria_video(src if srt else loc)
+            if en_tierra(tel):
+                fuera.append(m["clave"])
+                if copiar: os.remove(loc)
+                continue
             vids.append((u, tel))
             for p in tel:
-                if p["gps"]: filas.append([u + timedelta(seconds=p["s"]), p["lat"], p["lon"], 0, p["alt"], 0, p["vel"], "VIDEO"])
+                if p["gps"]: filas.append([u + timedelta(seconds=p["s"]), p["lat"], p["lon"], p.get("msl", 0), p["alt"], p.get("yaw", 0), p["vel"], "VIDEO", p.get("roll", 0), p.get("pitch", 0)])
                 else: sin += 1
             if cada > 0:
-                a, b = _fotogramas(src, tel, u, fd, cada); nf += a; ng += b
-            if copiar:
-                dst = os.path.join(vd, os.path.basename(src))
-                if not (os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src)):
-                    shutil.copy2(src, dst + ".part"); os.replace(dst + ".part", dst)
+                a, b = _fotogramas(loc, tel, u, fd, cada); nf += a; ng += b
         if fuera:
-            with open(OMITIDOS, "w") as f: json.dump(sorted(set(_json(OMITIDOS, [])) | set(fuera)), f)
+            om = sorted(set(_json(OMITIDOS, [])) | set(fuera))  # leer antes de abrir con "w", que vacia el archivo
+            with open(OMITIDOS, "w") as f: json.dump(om, f)
         if not nf and not filas and not vids:
             shutil.rmtree(carpeta, ignore_errors=True); tarea.update(pct=100, msg="Sin vuelo: video en tierra omitido."); return
         tarea["msg"] = "Calculando el recorrido..."; guardar_estimada(carpeta, vids)
         filas.sort(key=lambda f: f[0])
         with open(os.path.join(carpeta, "telemetria.csv"), "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f); w.writerow(CAB)
-            for h, la, lo, am, al, yw, v, o in filas:
-                w.writerow([h.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], f"{la:.7f}", f"{lo:.7f}", f"{am:.2f}", f"{al:.2f}", "0.00", "0.00", f"{yw:.2f}", f"{v:.2f}", 0, "0.00", o])
+            for h, la, lo, am, al, yw, v, o, *ac in filas:
+                ro, pi = ac or (0, 0)
+                w.writerow([h.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], f"{la:.7f}", f"{lo:.7f}", f"{am:.2f}", f"{al:.2f}", f"{ro:.2f}", f"{pi:.2f}", f"{yw:.2f}", f"{v:.2f}", 0, "0.00", o])
         with open(os.path.join(carpeta, "dron.json"), "w") as f:
             json.dump({"dron": MODELOS.get(med[0]["modelo"], med[0]["modelo"]), "camara": med[0]["modelo"], "archivos": [m["archivo"] for m in med], "claves": [m["clave"] for m in med],
-                       "precision_video_m": 11}, f, indent=1)
+                       "precision_video_m": 11 if not any("msl" in p for _, te in vids for p in te) else None}, f, indent=1)
         tarea.update(vuelo=os.path.basename(carpeta), pct=100, msg=f"{len(filas)} posiciones, {nf} imagenes ({ng} con GPS), {sin} segundos de video sin GPS.")
     except Exception as e:
         tarea.update(error=str(e), msg="Error: " + str(e))
